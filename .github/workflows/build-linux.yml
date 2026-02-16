@@ -63,7 +63,12 @@ jobs:
         run: mkdir -p installer/src-tauri/artifacts
 
       - name: Build TypeScript layer
-        run: pnpm build
+        run: |
+          if [ -f scripts/build.ts ]; then
+            pnpm build
+          else
+            echo "No build script found, using prebuilt dist/"
+          fi
 
       - name: Stage JS + CSS
         run: |

@@ -65,7 +65,12 @@ jobs:
         run: New-Item -ItemType Directory -Path installer\src-tauri\artifacts -Force
 
       - name: Build TypeScript layer
-        run: pnpm build
+        run: |
+          if (Test-Path scripts\build.ts) {
+            pnpm build
+          } else {
+            Write-Host "No build script found, using prebuilt dist/"
+          }
 
       - name: Stage JS + CSS
         run: |
