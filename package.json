@@ -1,0 +1,19 @@
+{
+  "name": "uprooted",
+  "version": "0.9.15",
+  "description": "A client mod framework for Root Communications",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "installer:dev": "pnpm --filter uprooted-installer tauri dev",
+    "installer:build": "pnpm --filter uprooted-installer tauri build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/watchthelight/uprooted"
+  }
+}

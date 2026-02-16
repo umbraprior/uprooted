@@ -1,0 +1,24 @@
+# Maintainer: watchthelight <admin@watchthelight.org>
+_pkgname=uprooted
+pkgname=${_pkgname}-bin
+pkgver=%%VERSION%%
+pkgrel=1
+pkgdesc="A client mod framework for Root Communications"
+arch=('x86_64')
+url="https://github.com/watchthelight/uprooted"
+license=('GPL-3.0-only')
+depends=('cairo' 'desktop-file-utils' 'gdk-pixbuf2' 'glib2' 'gtk3'
+         'hicolor-icon-theme' 'libsoup3' 'pango' 'webkit2gtk-4.1')
+provides=("${_pkgname}")
+conflicts=("${_pkgname}" "${_pkgname}-git")
+options=('!strip' '!debug')
+source_x86_64=("%%DEB_NAME%%")
+sha256sums_x86_64=('%%SHA256%%')
+
+prepare() {
+    ar x "${srcdir}/%%DEB_NAME%%"
+}
+
+package() {
+    tar -xf "${srcdir}/data.tar."* -C "${pkgdir}"
+}

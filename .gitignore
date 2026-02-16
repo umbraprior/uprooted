@@ -1,0 +1,25 @@
+node_modules/
+.pnpm-store/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tauri
+installer/src-tauri/target/
+installer/src-tauri/artifacts/
+installer/dist/
+
+# C# build output
+hook/bin/
+hook/obj/
+
+# Env
+.env
+.env.*

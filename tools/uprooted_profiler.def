@@ -1,0 +1,4 @@
+LIBRARY uprooted_profiler
+EXPORTS
+    DllGetClassObject = UprootedDllGetClassObject
+    DllCanUnloadNow = UprootedDllCanUnloadNow
