@@ -38,7 +38,7 @@ pub fn install() -> PatchResult {
     let settings_json = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".to_string());
 
     let injection = format!(
-        "{start}\n    <script>window.__UPROOTED_SETTINGS__={settings};</script>\n    <script src=\"file:/
+        "{start}\n    <script>window.__UPROOTED_SETTINGS__={settings};</script>\n    <script src=\"file:///{preload}\"></script>\n    <link rel=\"stylesheet\" href=\"file:///{css}\">\n    {end}",
         start = MARKER_START,
         end = MARKER_END,
         settings = settings_json,
