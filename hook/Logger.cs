@@ -1,14 +1,17 @@
 namespace Uprooted;
+
 internal static class Logger
 {
     private static readonly string LogPath;
     private static readonly object Lock = new();
+
     static Logger()
     {
         var profileDir = PlatformPaths.GetProfileDir();
         Directory.CreateDirectory(profileDir);
         LogPath = Path.Combine(profileDir, "uprooted-hook.log");
     }
+
     internal static void Log(string message)
     {
         try
@@ -20,5 +23,6 @@ internal static class Logger
         }
         catch { }
     }
+
     internal static void Log(string category, string message) => Log($"[{category}] {message}");
 }

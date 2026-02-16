@@ -1,9 +1,3 @@
-/// Embedded binary artifacts for deployment.
-///
-/// These files are compiled into the installer binary via `include_bytes!()`.
-/// The build pipeline stages real builds into `installer/src-tauri/artifacts/`
-/// before `cargo tauri build`.
-
 #[cfg(target_os = "windows")]
 pub const PROFILER: &[u8] = include_bytes!("../artifacts/uprooted_profiler.dll");
 #[cfg(target_os = "linux")]

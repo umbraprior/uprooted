@@ -1,8 +1,17 @@
 name: Build Installer
+
 on:
   workflow_dispatch:
   push:
-    paths: ["hook/**", "dist/**", "installer/**", "tools/uprooted_profiler.*", ".github/workflows/**"]
+    paths:
+      - "hook/**"
+      - "src/**"
+      - "installer/**"
+      - "tools/uprooted_profiler.c"
+      - "tools/uprooted_profiler.def"
+      - "tools/uprooted_profiler_linux.c"
+      - ".github/workflows/build-installer.yml"
+      - ".github/workflows/build-linux.yml"
 
 jobs:
   build:
@@ -13,29 +22,58 @@ jobs:
       CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: link.exe
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@v1
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: "10.0.x", dotnet-quality: "preview" }
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with: { workspaces: installer/src-tauri }
 
-      - run: pnpm install --frozen-lockfile
+      # ── Toolchains ──
 
-      - name: Stage artifacts
+      - name: Setup MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup .NET 10 Preview
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          dotnet-quality: "preview"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: installer/src-tauri
+
+      # ── Install deps ──
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── Build artifacts ──
+
+      - name: Create artifacts directory
+        run: New-Item -ItemType Directory -Path installer\src-tauri\artifacts -Force
+
+      - name: Build TypeScript layer
+        run: pnpm build
+
+      - name: Stage JS + CSS
         run: |
-          New-Item -ItemType Directory -Path installer\src-tauri\artifacts -Force
           Copy-Item dist\uprooted-preload.js installer\src-tauri\artifacts\
           Copy-Item dist\uprooted.css installer\src-tauri\artifacts\
 
       - name: Build UprootedHook.dll
         run: dotnet build hook -c Release -o hook/_out
 
-      - name: Stage Hook DLL
+      - name: Stage Hook DLL + deps
         run: |
           Copy-Item hook\_out\UprootedHook.dll installer\src-tauri\artifacts\
           Copy-Item hook\_out\UprootedHook.deps.json installer\src-tauri\artifacts\
@@ -43,17 +81,26 @@ jobs:
       - name: Compile profiler DLL
         run: cl.exe /LD /O2 /Fe:installer\src-tauri\artifacts\uprooted_profiler.dll tools\uprooted_profiler.c /link ole32.lib kernel32.lib shell32.lib /DEF:tools\uprooted_profiler.def
 
-      - name: Verify artifacts
+      - name: Verify staged artifacts
         run: |
-          $files = @("uprooted_profiler.dll","UprootedHook.dll","UprootedHook.deps.json","uprooted-preload.js","uprooted.css")
+          $files = @(
+            "uprooted_profiler.dll",
+            "UprootedHook.dll",
+            "UprootedHook.deps.json",
+            "uprooted-preload.js",
+            "uprooted.css"
+          )
           foreach ($f in $files) {
             $p = "installer\src-tauri\artifacts\$f"
-            if (-not (Test-Path $p)) { throw "Missing: $f" }
-            if ((Get-Item $p).Length -eq 0) { throw "Empty: $f" }
-            Write-Host "  $f ($((Get-Item $p).Length) bytes)"
+            if (-not (Test-Path $p)) { throw "Missing artifact: $f" }
+            $size = (Get-Item $p).Length
+            if ($size -eq 0) { throw "Empty artifact: $f" }
+            Write-Host "  $f ($size bytes)"
           }
 
-      - name: Build Tauri
+      # ── Build Tauri ──
+
+      - name: Build Tauri portable exe
         working-directory: installer
         run: pnpm tauri build
 
@@ -63,7 +110,7 @@ jobs:
           Copy-Item "installer\src-tauri\target\release\uprooted-installer.exe" "installer\src-tauri\target\release\Uprooted-$version.exe"
           Write-Host "Renamed to Uprooted-$version.exe"
 
-      - name: Upload
+      - name: Upload portable exe
         uses: actions/upload-artifact@v4
         with:
           name: Uprooted

@@ -1,13 +1,4 @@
 #Requires -Version 5.1
-<#
-.SYNOPSIS
-    Uninstaller for Uprooted - removes all modifications.
-.DESCRIPTION
-    1. Removes all Uprooted environment variables (both profiler and startup hooks)
-    2. Restores Root.exe from backup if it was patched
-    3. Removes installed DLL directory
-    4. Optionally removes log and settings files
-#>
 
 $ErrorActionPreference = "Stop"
 
@@ -21,11 +12,10 @@ function Write-Warn($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
 
 Write-Host ""
 Write-Host "  +---------------------------------+" -ForegroundColor Yellow
-Write-Host "  |   Uprooted Uninstaller v0.9.15   |" -ForegroundColor Yellow
+Write-Host "  |   Uprooted Uninstaller v0.1.95   |" -ForegroundColor Yellow
 Write-Host "  +---------------------------------+" -ForegroundColor Yellow
 Write-Host ""
 
-# Check if Root is running
 $rootProcess = Get-Process -Name "Root" -ErrorAction SilentlyContinue
 if ($rootProcess) {
     Write-Warn "Root is currently running. Please close it first."
@@ -39,7 +29,6 @@ if ($rootProcess) {
     }
 }
 
-# Step 1: Remove all environment variables
 Write-Step "Removing environment variables..."
 
 $envVars = @(
@@ -57,13 +46,11 @@ foreach ($var in $envVars) {
         Write-OK "Removed $var"
     }
 }
-# Also clear from current session
 foreach ($var in $envVars) {
     Remove-Item "Env:\$var" -ErrorAction SilentlyContinue
 }
 Write-OK "Environment variables cleaned"
 
-# Step 2: Restore Root.exe from backup
 Write-Step "Checking for Root.exe backup..."
 if (Test-Path $BackupPath) {
     Copy-Item $BackupPath $RootExePath -Force
@@ -73,7 +60,6 @@ if (Test-Path $BackupPath) {
     Write-OK "No backup found (Root.exe was not patched)"
 }
 
-# Step 3: Remove installed DLL directory
 Write-Step "Removing installed files..."
 if (Test-Path $InstallDir) {
     Remove-Item $InstallDir -Recurse -Force
@@ -82,7 +68,6 @@ if (Test-Path $InstallDir) {
     Write-OK "Install directory was already clean"
 }
 
-# Step 4: Clean up log and settings (optional)
 $profileDir = Join-Path $env:LOCALAPPDATA "Root Communications\Root\profile\default"
 $logFile = Join-Path $profileDir "uprooted-hook.log"
 $settingsFile = Join-Path $profileDir "uprooted-settings.json"

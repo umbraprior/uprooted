@@ -1,4 +1,3 @@
-// Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod detection;
@@ -36,7 +35,7 @@ fn kill_root() -> u32 {
 
 #[tauri::command]
 fn install_uprooted() -> PatchResult {
-    // Step 1: Deploy embedded files
+
     if let Err(e) = hook::deploy_files() {
         return PatchResult {
             success: false,
@@ -45,7 +44,7 @@ fn install_uprooted() -> PatchResult {
         };
     }
 
-    // Step 2: Set environment variables
+
     if let Err(e) = hook::set_env_vars() {
         return PatchResult {
             success: false,
@@ -54,13 +53,13 @@ fn install_uprooted() -> PatchResult {
         };
     }
 
-    // Step 3: Patch HTML files
+
     patcher::install()
 }
 
 #[tauri::command]
 fn uninstall_uprooted() -> PatchResult {
-    // Step 1: Remove environment variables
+
     if let Err(e) = hook::remove_env_vars() {
         return PatchResult {
             success: false,
@@ -69,10 +68,10 @@ fn uninstall_uprooted() -> PatchResult {
         };
     }
 
-    // Step 2: Restore HTML files
+
     let result = patcher::uninstall();
 
-    // Step 3: Remove deployed files
+
     if let Err(e) = hook::remove_files() {
         return PatchResult {
             success: false,
@@ -86,7 +85,7 @@ fn uninstall_uprooted() -> PatchResult {
 
 #[tauri::command]
 fn repair_uprooted() -> PatchResult {
-    // Re-deploy files (overwrite)
+
     if let Err(e) = hook::deploy_files() {
         return PatchResult {
             success: false,
@@ -95,7 +94,7 @@ fn repair_uprooted() -> PatchResult {
         };
     }
 
-    // Re-set env vars
+
     if let Err(e) = hook::set_env_vars() {
         return PatchResult {
             success: false,
@@ -104,7 +103,7 @@ fn repair_uprooted() -> PatchResult {
         };
     }
 
-    // Re-patch HTML
+
     patcher::repair()
 }
 

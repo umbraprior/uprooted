@@ -7,7 +7,7 @@ use std::path::Path;
 
 const MARKER_START: &str = "<!-- uprooted:start -->";
 const MARKER_END: &str = "<!-- uprooted:end -->";
-/// Legacy marker for detection of older installs
+
 const LEGACY_MARKER: &str = "<!-- uprooted -->";
 const BACKUP_SUFFIX: &str = ".uprooted.bak";
 
@@ -18,7 +18,6 @@ pub struct PatchResult {
     pub files_patched: Vec<String>,
 }
 
-/// Check whether a file contains any uprooted injection.
 pub fn is_patched(content: &str) -> bool {
     content.contains(MARKER_START) || content.contains(LEGACY_MARKER)
 }
@@ -39,7 +38,7 @@ pub fn install() -> PatchResult {
     let settings_json = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".to_string());
 
     let injection = format!(
-        "{start}\n    <script>window.__UPROOTED_SETTINGS__={settings};</script>\n    <script src=\"file:///{preload}\"></script>\n    <link rel=\"stylesheet\" href=\"file:///{css}\">\n    {end}",
+        "{start}\n    <script>window.__UPROOTED_SETTINGS__={settings};</script>\n    <script src=\"file:/
         start = MARKER_START,
         end = MARKER_END,
         settings = settings_json,
@@ -73,7 +72,7 @@ pub fn install() -> PatchResult {
             continue;
         }
 
-        // Backup original
+
         let backup_path_str = format!("{}{}", file.to_string_lossy(), BACKUP_SUFFIX);
         let backup_path = Path::new(&backup_path_str);
         if !backup_path.exists() {
@@ -86,7 +85,7 @@ pub fn install() -> PatchResult {
             }
         }
 
-        // Inject before </head>
+
         let new_content = content.replace("</head>", &format!("    {}\n  </head>", injection));
         if let Err(e) = fs::write(file, &new_content) {
             return PatchResult {
@@ -125,7 +124,7 @@ pub fn uninstall() -> PatchResult {
             let _ = fs::remove_file(backup_path);
             restored.push(file.to_string_lossy().to_string());
         } else {
-            // Fallback: strip injected block
+
             if let Ok(content) = fs::read_to_string(file) {
                 if is_patched(&content) {
                     let cleaned = strip_injection(&content);
@@ -146,7 +145,6 @@ pub fn uninstall() -> PatchResult {
     }
 }
 
-/// Strip injected content between start/end markers, or legacy marker lines.
 fn strip_injection(content: &str) -> String {
     let mut result = Vec::new();
     let mut inside_block = false;
@@ -163,7 +161,7 @@ fn strip_injection(content: &str) -> String {
         if inside_block {
             continue;
         }
-        // Legacy: strip lines with old marker or uprooted references
+
         if line.contains(LEGACY_MARKER) {
             continue;
         }

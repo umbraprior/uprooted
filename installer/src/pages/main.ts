@@ -14,8 +14,6 @@ let detection: DetectionResult | null = null;
 const isLinux = navigator.platform.startsWith("Linux");
 const rootExeName = isLinux ? "Root" : "root.exe";
 
-// ── Logging ──
-
 function log(text: string, type: "info" | "success" | "error" | "warn" | "" = ""): void {
   const line = document.createElement("div");
   line.className = `log-line ${type}`;
@@ -49,8 +47,6 @@ function fileName(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
-// ── Detection ──
-
 async function runDetection(): Promise<void> {
   log("scanning system...");
   try {
@@ -62,7 +58,7 @@ async function runDetection(): Promise<void> {
 
   logBlank();
 
-  // Root executable
+
   if (detection.root_found) {
     log(`${rootExeName} found`, "success");
     log(`  path: ${detection.root_path}`);
@@ -71,10 +67,10 @@ async function runDetection(): Promise<void> {
     log("  is Root Communications installed?", "warn");
   }
 
-  // Profile directory
+
   log(`profile: ${detection.profile_dir}`);
 
-  // HTML files
+
   if (detection.html_files.length > 0) {
     log(`${detection.html_files.length} html target${detection.html_files.length > 1 ? "s" : ""} found`, "success");
     for (const f of detection.html_files) {
@@ -87,7 +83,7 @@ async function runDetection(): Promise<void> {
 
   logBlank();
 
-  // Hook files
+
   const hs = detection.hook_status;
   if (hs.files_ok) {
     log("hook files: all deployed", "success");
@@ -105,7 +101,7 @@ async function runDetection(): Promise<void> {
     }
   }
 
-  // Environment variables
+
   if (hs.env_ok) {
     log("env vars: configured", "success");
   } else {
@@ -121,7 +117,7 @@ async function runDetection(): Promise<void> {
     }
   }
 
-  // HTML patches
+
   if (detection.is_installed) {
     log("html patches: applied", "success");
   } else {
@@ -130,7 +126,7 @@ async function runDetection(): Promise<void> {
 
   logBlank();
 
-  // Smart scenario analysis
+
   analyzeScenario();
 
   updateStatusDisplay();
@@ -158,7 +154,7 @@ function analyzeScenario(): void {
     return;
   }
 
-  // Partial install scenarios
+
   const hasAnyFiles = hs.profiler_dll || hs.hook_dll || hs.hook_deps || hs.preload_js || hs.theme_css;
   const hasAnyEnv = hs.env_enable_profiling || hs.env_profiler_guid || hs.env_profiler_path;
 
@@ -182,8 +178,6 @@ function analyzeScenario(): void {
     log("ready to install", "info");
   }
 }
-
-// ── Status display ──
 
 function updateStatusDisplay(): void {
   const el = document.getElementById("status-rows");
@@ -221,8 +215,6 @@ function updateStatusDisplay(): void {
     ${allGood ? '<div class="status-note success">restart root to activate</div>' : ""}
   `;
 }
-
-// ── Button state ──
 
 function updateButtons(): void {
   const installBtn = document.getElementById("btn-install") as HTMLButtonElement | null;
@@ -262,15 +254,12 @@ function setButtonsDisabled(disabled: boolean): void {
   }
 }
 
-// ── Root-running guard ──
-
-/** Returns true if safe to proceed, false if user cancelled. */
 async function ensureRootClosed(): Promise<boolean> {
   let running = false;
   try {
     running = await checkRootRunning();
   } catch {
-    return true; // can't check, proceed anyway
+    return true;
   }
   if (!running) return true;
 
@@ -308,7 +297,7 @@ async function ensureRootClosed(): Promise<boolean> {
       try {
         const killed = await killRoot();
         log(`closed ${killed} root process${killed !== 1 ? "es" : ""}`, "info");
-        // Brief wait for process to fully exit
+
         await new Promise((r) => setTimeout(r, 1500));
       } catch (err) {
         log(`failed to close root: ${err}`, "error");
@@ -317,7 +306,7 @@ async function ensureRootClosed(): Promise<boolean> {
         return;
       }
 
-      // Verify it's actually gone
+
       try {
         const still = await checkRootRunning();
         if (still) {
@@ -326,15 +315,13 @@ async function ensureRootClosed(): Promise<boolean> {
           resolve(false);
           return;
         }
-      } catch { /* proceed */ }
+      } catch {  }
 
       cleanup();
       resolve(true);
     });
   });
 }
-
-// ── Actions ──
 
 async function handleInstall(): Promise<void> {
   if (!(await ensureRootClosed())) return;
@@ -422,8 +409,6 @@ async function handleRepair(): Promise<void> {
   }
 }
 
-// ── Copy logs ──
-
 function copyLogs(): void {
   if (!logEl) return;
   const text = Array.from(logEl.querySelectorAll(".log-line"))
@@ -441,14 +426,12 @@ function copyLogs(): void {
   });
 }
 
-// ── Init ──
-
 export async function init(container: HTMLElement): Promise<void> {
   let version = "0.9.15";
   try {
     version = await getUprootedVersion();
   } catch {
-    // use default
+
   }
 
   container.innerHTML = `

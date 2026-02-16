@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .pnpm-store/
 
 # IDE
@@ -11,6 +12,12 @@ node_modules/
 .DS_Store
 Thumbs.db
 
+# Build
+*.tsbuildinfo
+
+# Astro
+site/.astro/
+
 # Tauri
 installer/src-tauri/target/
 installer/src-tauri/artifacts/
@@ -19,7 +26,33 @@ installer/dist/
 # C# build output
 hook/bin/
 hook/obj/
+hook-test/**/bin/
+hook-test/**/obj/
+tests/**/bin/
+tests/**/obj/
 
 # Env
 .env
 .env.*
+
+# Old build outputs
+Uprooted/
+
+# Compiled tool binaries (built locally)
+tools/*.exe
+tools/*.obj
+tools/*.dll
+tools/*.lib
+tools/*.exp
+
+# Hook build output
+hook/_out/
+
+# Windows junk
+nul
+
+# Research artifacts
+__pycache__/
+*.pyc
+LIVE_TOKEN.txt
+*.obj

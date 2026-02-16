@@ -1,25 +1,12 @@
 #!/bin/bash
-# Uprooted Linux Installer v0.1.9
-# Standalone bash installer for systems without the GUI installer.
-#
-# Usage: ./install-uprooted-linux.sh [--root-path /path/to/Root.AppImage]
-#
-# This script:
-# 1. Finds Root.AppImage (or uses --root-path)
-# 2. Builds (or downloads) profiler + hook artifacts
-# 3. Deploys to ~/.local/share/uprooted/
-# 4. Creates a wrapper script with CLR profiler env vars
-# 5. Creates a .desktop file for launching Root with Uprooted
-# 6. Patches HTML files in Root's profile directory
 
 set -euo pipefail
 
 INSTALL_DIR="$HOME/.local/share/uprooted"
 PROFILE_DIR="$HOME/.local/share/Root Communications/Root/profile/default"
 PROFILER_GUID="{D1A6F5A0-1234-4567-89AB-CDEF01234567}"
-VERSION="0.1.9"
+VERSION="0.1.95"
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -29,8 +16,6 @@ log()   { echo -e "${GREEN}[+]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 error() { echo -e "${RED}[-]${NC} $1"; }
 die()   { error "$1"; exit 1; }
-
-# ── Parse arguments ──
 
 ROOT_PATH=""
 while [[ $# -gt 0 ]]; do
@@ -49,8 +34,6 @@ while [[ $# -gt 0 ]]; do
         *) die "Unknown option: $1" ;;
     esac
 done
-
-# ── Find Root ──
 
 find_root() {
     if [[ -n "$ROOT_PATH" ]]; then
@@ -78,7 +61,6 @@ find_root() {
         fi
     done
 
-    # Try which
     if command -v Root &>/dev/null; then
         ROOT_PATH="$(which Root)"
         log "Found Root in PATH: $ROOT_PATH"
@@ -87,8 +69,6 @@ find_root() {
 
     die "Could not find Root.AppImage. Use --root-path to specify its location."
 }
-
-# ── Check prerequisites ──
 
 check_prereqs() {
     local missing=()
@@ -118,27 +98,21 @@ check_prereqs() {
     fi
 }
 
-# ── Build artifacts ──
-
 build_artifacts() {
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
     log "Building artifacts from source..."
 
-    # Build TypeScript layer
     log "Building TypeScript layer..."
     (cd "$script_dir" && pnpm install --frozen-lockfile && pnpm build)
 
-    # Build Hook DLL
     log "Building UprootedHook.dll..."
     dotnet build "$script_dir/hook" -c Release -o "$script_dir/hook/_out"
 
-    # Build profiler .so
     log "Compiling libuprooted_profiler.so..."
     gcc -shared -fPIC -O2 -o "$script_dir/libuprooted_profiler.so" "$script_dir/tools/uprooted_profiler_linux.c"
 
-    # Deploy
     mkdir -p "$INSTALL_DIR"
 
     cp "$script_dir/libuprooted_profiler.so" "$INSTALL_DIR/"
@@ -152,14 +126,11 @@ build_artifacts() {
     log "Artifacts deployed to $INSTALL_DIR"
 }
 
-# ── Set session-wide env vars (systemd environment.d) ──
-
 set_env_vars() {
     local env_dir="$HOME/.config/environment.d"
     mkdir -p "$env_dir"
 
     cat > "$env_dir/uprooted.conf" << ENVCONF
-# Uprooted CLR profiler — remove this file or run the uninstaller to disable
 CORECLR_ENABLE_PROFILING=1
 CORECLR_PROFILER=$PROFILER_GUID
 CORECLR_PROFILER_PATH=$INSTALL_DIR/libuprooted_profiler.so
@@ -170,13 +141,10 @@ ENVCONF
     warn "Or use the wrapper script below for immediate use."
 }
 
-# ── Create wrapper script ──
-
 create_wrapper() {
     local wrapper="$INSTALL_DIR/launch-root.sh"
     cat > "$wrapper" << WRAPPER
 #!/bin/bash
-# Uprooted launcher - sets CLR profiler env vars for Root only
 export CORECLR_ENABLE_PROFILING=1
 export CORECLR_PROFILER='$PROFILER_GUID'
 export CORECLR_PROFILER_PATH='$INSTALL_DIR/libuprooted_profiler.so'
@@ -186,8 +154,6 @@ WRAPPER
     chmod +x "$wrapper"
     log "Wrapper script created: $wrapper"
 }
-
-# ── Create .desktop file ──
 
 create_desktop_file() {
     local apps_dir="$HOME/.local/share/applications"
@@ -206,8 +172,6 @@ DESKTOP
     log ".desktop file created"
 }
 
-# ── Patch HTML files ──
-
 patch_html() {
     if [[ ! -d "$PROFILE_DIR" ]]; then
         warn "Profile directory not found: $PROFILE_DIR"
@@ -219,7 +183,6 @@ patch_html() {
     local js_path="$INSTALL_DIR/uprooted-preload.js"
     local css_path="$INSTALL_DIR/uprooted.css"
 
-    # Find HTML files
     local html_files=()
     if [[ -f "$PROFILE_DIR/WebRtcBundle/index.html" ]]; then
         html_files+=("$PROFILE_DIR/WebRtcBundle/index.html")
@@ -245,10 +208,8 @@ patch_html() {
             continue
         fi
 
-        # Backup original
         cp "$html" "${html}.uprooted-backup"
 
-        # Insert before </head>
         sed -i "s|</head>|${css_tag}\n${script_tag}\n</head>|" "$html"
         patched=$((patched + 1))
         log "Patched: $(basename "$(dirname "$html")")/index.html"
@@ -256,8 +217,6 @@ patch_html() {
 
     log "$patched HTML file(s) patched"
 }
-
-# ── Main ──
 
 echo ""
 echo "  Uprooted Linux Installer v$VERSION"

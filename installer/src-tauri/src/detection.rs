@@ -44,7 +44,7 @@ pub fn get_root_exe_path() -> PathBuf {
 #[cfg(target_os = "linux")]
 pub fn get_root_exe_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
-    // Search common locations for Root.AppImage
+
     let candidates = [
         format!("{}/Applications/Root.AppImage", home),
         format!("{}/Downloads/Root.AppImage", home),
@@ -58,12 +58,12 @@ pub fn get_root_exe_path() -> PathBuf {
             return p;
         }
     }
-    // Also check if a plain "Root" binary exists (extracted AppImage)
+
     let local_root = PathBuf::from(&home).join(".local/bin/Root");
     if local_root.exists() {
         return local_root;
     }
-    // Default fallback
+
     PathBuf::from(format!("{}/Applications/Root.AppImage", home))
 }
 
@@ -71,13 +71,13 @@ pub fn find_target_html_files() -> Vec<PathBuf> {
     let profile = get_profile_dir();
     let mut targets = Vec::new();
 
-    // WebRtcBundle/index.html
+
     let webrtc_index = profile.join("WebRtcBundle").join("index.html");
     if webrtc_index.exists() {
         targets.push(webrtc_index);
     }
 
-    // RootApps/*/index.html
+
     let root_apps_dir = profile.join("RootApps");
     if root_apps_dir.exists() {
         if let Ok(entries) = fs::read_dir(&root_apps_dir) {

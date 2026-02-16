@@ -1,14 +1,17 @@
 namespace Uprooted;
+
 internal class UprootedSettings
 {
     public bool Enabled { get; set; } = true;
-    public string Version { get; set; } = "0.9.15";
+    public string Version { get; set; } = "0.1.95";
     public string ActiveTheme { get; set; } = "default-dark";
     public Dictionary<string, bool> Plugins { get; set; } = new();
     public string CustomCss { get; set; } = "";
     public string CustomAccent { get; set; } = "#3B6AF8";
     public string CustomBackground { get; set; } = "#0D1521";
+
     private static string? _settingsPath;
+
     private static string GetSettingsPath()
     {
         if (_settingsPath != null) return _settingsPath;
@@ -23,6 +26,7 @@ internal class UprootedSettings
         }
         return _settingsPath;
     }
+
     internal static UprootedSettings Load()
     {
         var settings = new UprootedSettings();
@@ -57,6 +61,7 @@ internal class UprootedSettings
         }
         return settings;
     }
+
     internal void Save()
     {
         try

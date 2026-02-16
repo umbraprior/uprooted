@@ -1,4 +1,5 @@
 namespace Uprooted;
+
 internal static class PlatformPaths
 {
     internal static string GetProfileDir()

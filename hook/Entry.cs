@@ -1,9 +1,12 @@
 using System.Runtime.CompilerServices;
 using Uprooted;
+
 namespace UprootedHook;
+
 public class Entry
 {
     private static int _initialized = 0;
+
     [ModuleInitializer]
     internal static void ModuleInit()
     {
@@ -13,6 +16,7 @@ public class Entry
             StartupHook.Initialize();
         }
     }
+
     public Entry()
     {
         if (Interlocked.CompareExchange(ref _initialized, 1, 0) == 0)
