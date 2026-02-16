@@ -11,6 +11,9 @@ on:
       - "packaging/arch/**"
       - ".github/workflows/build-linux.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build-linux:
     runs-on: ubuntu-latest
@@ -112,6 +115,18 @@ jobs:
           name: Uprooted-Linux-AppImage
           path: installer/src-tauri/target/release/bundle/appimage/*.AppImage
 
+      - name: Upload to GitHub Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(jq -r '.version' installer/src-tauri/tauri.conf.json)
+          echo "Uploading Linux artifacts to release v$VERSION"
+          for f in installer/src-tauri/target/release/bundle/deb/*.deb \
+                   installer/src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$f" ] && gh release upload "v$VERSION" "$f" --clobber || true
+          done
+
   # ── Arch Linux Package ──
   # Repackages the .deb into a native .pkg.tar.zst for pacman
 
@@ -163,3 +178,13 @@ jobs:
         with:
           name: Uprooted-Arch
           path: uprooted-bin/*.pkg.tar.zst
+
+      - name: Upload to GitHub Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(jq -r '.version' installer/src-tauri/tauri.conf.json)
+          for f in uprooted-bin/*.pkg.tar.zst; do
+            [ -f "$f" ] && gh release upload "v$VERSION" "$f" --clobber || true
+          done

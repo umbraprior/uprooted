@@ -16,6 +16,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     env:
       CC: cl.exe
       CXX: cl.exe
@@ -115,3 +117,14 @@ jobs:
         with:
           name: Uprooted
           path: installer/src-tauri/target/release/Uprooted-*.exe
+
+      - name: Upload to GitHub Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content installer\src-tauri\tauri.conf.json | ConvertFrom-Json).version
+          $exe = Get-Item "installer\src-tauri\target\release\Uprooted-$version.exe"
+          Write-Host "Uploading $($exe.Name) to release v$version"
+          gh release upload "v$version" $exe.FullName --clobber 2>&1
+          if ($LASTEXITCODE -ne 0) { Write-Host "No release v$version found, skipping" }
