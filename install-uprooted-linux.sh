@@ -116,6 +116,13 @@ run_diagnose() {
         warn "  root-uprooted.desktop: missing"
     fi
 
+    local plasma_env="$HOME/.config/plasma-workspace/env/uprooted.sh"
+    if [[ -f "$plasma_env" ]]; then
+        log "  plasma-workspace/env/uprooted.sh: exists (KDE Plasma)"
+    else
+        warn "  plasma-workspace/env/uprooted.sh: missing (KDE users need this)"
+    fi
+
     if grep -q "CORECLR_ENABLE_PROFILING" "$HOME/.profile" 2>/dev/null; then
         log "  ~/.profile: contains Uprooted env vars"
     else
@@ -304,7 +311,14 @@ run_uninstall() {
         log "Removed $env_conf"
     fi
 
-    # 3. Clean env vars from ~/.profile
+    # 3. Remove KDE Plasma env script
+    local plasma_env="$HOME/.config/plasma-workspace/env/uprooted.sh"
+    if [[ -f "$plasma_env" ]]; then
+        rm -f "$plasma_env"
+        log "Removed $plasma_env"
+    fi
+
+    # 4. Clean env vars from ~/.profile
     if grep -q "CORECLR_ENABLE_PROFILING" "$HOME/.profile" 2>/dev/null; then
         # Remove the Uprooted block from .profile
         local tmp="$HOME/.profile.tmp"
@@ -327,14 +341,14 @@ run_uninstall() {
         log "Cleaned Uprooted env vars from ~/.profile"
     fi
 
-    # 4. Remove .desktop file
+    # 5. Remove .desktop file
     local desktop="$HOME/.local/share/applications/root-uprooted.desktop"
     if [[ -f "$desktop" ]]; then
         rm -f "$desktop"
         log "Removed .desktop file"
     fi
 
-    # 5. Remove installed files
+    # 6. Remove installed files
     if [[ -d "$INSTALL_DIR" ]]; then
         rm -rf "$INSTALL_DIR"
         log "Removed $INSTALL_DIR"
@@ -559,6 +573,20 @@ CORECLR_PROFILER_PATH=$INSTALL_DIR/libuprooted_profiler.so
 DOTNET_ReadyToRun=0
 ENVCONF
     log "Session env vars written to $env_dir/uprooted.conf"
+
+    # KDE Plasma env script -- sourced on Plasma session startup
+    local plasma_env_dir="$HOME/.config/plasma-workspace/env"
+    mkdir -p "$plasma_env_dir"
+    cat > "$plasma_env_dir/uprooted.sh" << PLASMAENV
+#!/bin/sh
+# Uprooted CLR profiler -- remove this file or run the uninstaller to disable
+export CORECLR_ENABLE_PROFILING=1
+export CORECLR_PROFILER='$PROFILER_GUID'
+export CORECLR_PROFILER_PATH='$INSTALL_DIR/libuprooted_profiler.so'
+export DOTNET_ReadyToRun=0
+PLASMAENV
+    chmod +x "$plasma_env_dir/uprooted.sh"
+    log "KDE Plasma env script written to $plasma_env_dir/uprooted.sh"
 
     # Also add to ~/.profile as fallback for non-systemd sessions (X11, login shells)
     if ! grep -q "CORECLR_ENABLE_PROFILING" "$HOME/.profile" 2>/dev/null; then
