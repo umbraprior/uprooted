@@ -12,6 +12,7 @@ export interface HookStatus {
   env_ready_to_run: boolean;
   files_ok: boolean;
   env_ok: boolean;
+  env_vars_active: boolean;
 }
 
 export interface DetectionResult {

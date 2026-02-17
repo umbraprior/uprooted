@@ -4,6 +4,7 @@ import { init as initThemesPage } from "./pages/themes.js";
 
 const { getCurrentWindow } = (window as any).__TAURI__.window;
 
+// Titlebar controls
 function setupTitlebar(): void {
   const appWindow = getCurrentWindow();
 
@@ -16,6 +17,7 @@ function setupTitlebar(): void {
   });
 }
 
+// Page routing
 type PageName = "installer" | "themes";
 const pageInits: Record<PageName, (el: HTMLElement) => Promise<void>> = {
   installer: initInstallerPage,
@@ -24,17 +26,17 @@ const pageInits: Record<PageName, (el: HTMLElement) => Promise<void>> = {
 const initialized = new Set<PageName>();
 
 function switchPage(name: PageName): void {
-
+  // Update nav tabs
   for (const tab of document.querySelectorAll<HTMLElement>(".nav-tab")) {
     tab.classList.toggle("active", tab.dataset.page === name);
   }
 
-
+  // Update page visibility
   for (const page of document.querySelectorAll<HTMLElement>(".page")) {
     page.classList.toggle("active", page.id === `page-${name}`);
   }
 
-
+  // Initialize page if not done yet
   if (!initialized.has(name)) {
     initialized.add(name);
     const el = document.getElementById(`page-${name}`);
@@ -53,6 +55,7 @@ function setupNav(): void {
   }
 }
 
+// Boot
 document.addEventListener("DOMContentLoaded", () => {
   initStarfield();
   setupTitlebar();

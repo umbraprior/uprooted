@@ -1,11 +1,11 @@
 # Maintainer: watchthelight
 pkgname=uprooted
-pkgver=0.1.9
+pkgver=0.2.3
 pkgrel=1
 pkgdesc="Client mod framework for Root Communications"
 arch=('x86_64')
 url="https://github.com/watchthelight/uprooted"
-license=('GPL-3.0-only')
+license=('LicenseRef-Uprooted-1.0')
 depends=('dotnet-runtime-10.0')
 makedepends=('gcc' 'dotnet-sdk-10.0' 'nodejs' 'pnpm' 'rust')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/watchthelight/uprooted/archive/v$pkgver.tar.gz")

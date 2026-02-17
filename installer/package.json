@@ -1,6 +1,6 @@
 {
   "name": "uprooted-installer",
-  "version": "0.1.95",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "scripts": {

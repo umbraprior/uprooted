@@ -3,12 +3,15 @@ namespace Uprooted;
 internal class UprootedSettings
 {
     public bool Enabled { get; set; } = true;
-    public string Version { get; set; } = "0.1.95";
+    public string Version { get; set; } = "0.2.3";
     public string ActiveTheme { get; set; } = "default-dark";
     public Dictionary<string, bool> Plugins { get; set; } = new();
     public string CustomCss { get; set; } = "";
     public string CustomAccent { get; set; } = "#3B6AF8";
     public string CustomBackground { get; set; } = "#0D1521";
+    public bool NsfwFilterEnabled { get; set; } = false;
+    public string NsfwApiKey { get; set; } = "";
+    public double NsfwThreshold { get; set; } = 0.6;
 
     private static string? _settingsPath;
 
@@ -47,6 +50,13 @@ internal class UprootedSettings
                     case "CustomCss": settings.CustomCss = val; break;
                     case "CustomAccent": settings.CustomAccent = val; break;
                     case "CustomBackground": settings.CustomBackground = val; break;
+                    case "NsfwFilterEnabled": settings.NsfwFilterEnabled = val == "true"; break;
+                    case "NsfwApiKey": settings.NsfwApiKey = val; break;
+                    case "NsfwThreshold":
+                        if (double.TryParse(val, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var threshold))
+                            settings.NsfwThreshold = threshold;
+                        break;
                     case var k when k.StartsWith("Plugin."):
                         var pluginName = k["Plugin.".Length..];
                         settings.Plugins[pluginName] = val == "true";
@@ -74,7 +84,10 @@ internal class UprootedSettings
                 "Version=" + Version,
                 "CustomCss=" + CustomCss,
                 "CustomAccent=" + CustomAccent,
-                "CustomBackground=" + CustomBackground
+                "CustomBackground=" + CustomBackground,
+                "NsfwFilterEnabled=" + (NsfwFilterEnabled ? "true" : "false"),
+                "NsfwApiKey=" + NsfwApiKey,
+                "NsfwThreshold=" + NsfwThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)
             };
             foreach (var (name, enabled) in Plugins)
             {

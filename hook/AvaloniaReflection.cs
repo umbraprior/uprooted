@@ -4,9 +4,13 @@ using System.Reflection;
 
 namespace Uprooted;
 
+/// <summary>
+/// Cached reflection handles for all Avalonia types, properties, and methods.
+/// Single-file apps can't use Type.GetType("..., Assembly") so we scan loaded assemblies.
+/// </summary>
 internal class AvaloniaReflection
 {
-
+    // Core types
     public Type? ApplicationType { get; private set; }
     public Type? DispatcherType { get; private set; }
     public Type? WindowType { get; private set; }
@@ -24,16 +28,16 @@ internal class AvaloniaReflection
     public Type? EllipseType { get; private set; }
     public Type? CanvasType { get; private set; }
 
-
+    // Overlay / layout types
     public Type? OverlayLayerType { get; private set; }
     public Type? PointType { get; private set; }
     public Type? RectType { get; private set; }
 
-
+    // Resource system types
     public Type? ResourceDictionaryType { get; private set; }
     public Type? IResourceDictionaryType { get; private set; }
 
-
+    // Value types
     public Type? SolidColorBrushType { get; private set; }
     public Type? LinearGradientBrushType { get; private set; }
     public Type? GradientStopType { get; private set; }
@@ -44,12 +48,12 @@ internal class AvaloniaReflection
     public Type? ThicknessType { get; private set; }
     public Type? CornerRadiusType { get; private set; }
 
-
+    // Grid layout types
     public Type? ColumnDefinitionType { get; private set; }
     public Type? GridLengthType { get; private set; }
     public Type? GridUnitTypeEnum { get; private set; }
 
-
+    // Enums / structs
     public Type? HorizontalAlignmentType { get; private set; }
     public Type? VerticalAlignmentType { get; private set; }
     public Type? OrientationType { get; private set; }
@@ -58,13 +62,13 @@ internal class AvaloniaReflection
     public Type? CursorType { get; private set; }
     public Type? StandardCursorType { get; private set; }
 
-
+    // Extension methods + interfaces
     public Type? VisualExtensionsType { get; private set; }
     public Type? VisualType { get; private set; }
     public Type? DesktopLifetimeType { get; private set; }
     public Type? TopLevelType { get; private set; }
 
-
+    // Cached property/method handles
     private PropertyInfo? _appCurrent;
     private PropertyInfo? _appLifetime;
     private PropertyInfo? _lifetimeMainWindow;
@@ -102,22 +106,22 @@ internal class AvaloniaReflection
     private MethodInfo? _gridSetRow;
     private MethodInfo? _gridGetRow;
     private PropertyInfo? _toggleSwitchIsChecked;
-    private FieldInfo? _textBoxTextProperty;
-    private FieldInfo? _textBoxWatermarkProperty;
-    private FieldInfo? _textBoxMaxLengthProperty;
+    private FieldInfo? _textBoxTextProperty;       // TextBox.TextProperty (AvaloniaProperty)
+    private FieldInfo? _textBoxWatermarkProperty;  // TextBox.WatermarkProperty (AvaloniaProperty)
+    private FieldInfo? _textBoxMaxLengthProperty;  // TextBox.MaxLengthProperty (AvaloniaProperty)
 
-
-    private MethodInfo? _overlayGetOverlayLayer;
-    private MethodInfo? _canvasSetLeft;
-    private MethodInfo? _canvasSetTop;
-    private PropertyInfo? _layoutableBounds;
-    private MethodInfo? _translatePoint;
+    // Overlay / Canvas / Bounds
+    private MethodInfo? _overlayGetOverlayLayer;  // OverlayLayer.GetOverlayLayer(Visual)
+    private MethodInfo? _canvasSetLeft;            // Canvas.SetLeft(AvaloniaObject, double)
+    private MethodInfo? _canvasSetTop;             // Canvas.SetTop(AvaloniaObject, double)
+    private PropertyInfo? _layoutableBounds;       // Layoutable.Bounds -> Rect
+    private MethodInfo? _translatePoint;           // Visual.TranslatePoint(Point, Visual) extension
     private PropertyInfo? _controlOpacity;
     private PropertyInfo? _controlIsHitTestVisible;
 
-
-    private PropertyInfo? _appResources;
-    private PropertyInfo? _resourcesMergedDicts;
+    // Resource system
+    private PropertyInfo? _appResources;              // Application.Resources
+    private PropertyInfo? _resourcesMergedDicts;       // IResourceDictionary.MergedDictionaries
 
     public bool IsResolved { get; private set; }
 
@@ -181,7 +185,7 @@ internal class AvaloniaReflection
         TextBoxType = Find("Avalonia.Controls.TextBox");
         EllipseType = Find("Avalonia.Controls.Shapes.Ellipse");
 
-
+        // Fallback: search by name if namespace differs
         EllipseType ??= typeMap.Values.FirstOrDefault(t =>
             t.Name == "Ellipse" && t.Namespace?.StartsWith("Avalonia") == true && !t.IsAbstract);
 
@@ -211,18 +215,18 @@ internal class AvaloniaReflection
         VisualType = Find("Avalonia.Visual");
         TopLevelType = Find("Avalonia.Controls.TopLevel");
 
-
+        // Overlay / Canvas / layout types
         OverlayLayerType = Find("Avalonia.Controls.Primitives.OverlayLayer");
         CanvasType = Find("Avalonia.Controls.Canvas");
         PointType = Find("Avalonia.Point");
         RectType = Find("Avalonia.Rect");
 
-
+        // Resource system
         ResourceDictionaryType = Find("Avalonia.Controls.ResourceDictionary");
-
+        // IResourceDictionary may be in different namespaces
         IResourceDictionaryType = Find("Avalonia.Controls.IResourceDictionary");
 
-
+        // IClassicDesktopStyleApplicationLifetime - match by suffix
         foreach (var kv in typeMap)
         {
             if (kv.Key.EndsWith("IClassicDesktopStyleApplicationLifetime") && kv.Value.IsInterface)
@@ -246,18 +250,18 @@ internal class AvaloniaReflection
         var pub = BindingFlags.Public | BindingFlags.Instance;
         var stat = BindingFlags.Public | BindingFlags.Static;
 
-
+        // Application
         _appCurrent = ApplicationType?.GetProperty("Current", BindingFlags.Public | BindingFlags.Static);
         _appLifetime = ApplicationType?.GetProperty("ApplicationLifetime", pub);
 
-
+        // Desktop Lifetime
         _lifetimeMainWindow = DesktopLifetimeType?.GetProperty("MainWindow", pub);
         _lifetimeWindows = DesktopLifetimeType?.GetProperty("Windows", pub);
 
-
+        // Dispatcher
         _dispatcherUIThread = DispatcherType?.GetProperty("UIThread", stat);
 
-
+        // Find Post(Action, DispatcherPriority) - 2 params
         _dispatcherPost = DispatcherType?.GetMethods(pub)
             .Where(m => m.Name == "Post" && !m.IsGenericMethod)
             .FirstOrDefault(m =>
@@ -266,7 +270,7 @@ internal class AvaloniaReflection
                 return p.Length == 2 && p[0].ParameterType == typeof(Action);
             });
 
-
+        // Fallback: Post(Action) - 1 param
         _dispatcherPost ??= DispatcherType?.GetMethods(pub)
             .Where(m => m.Name == "Post" && !m.IsGenericMethod)
             .FirstOrDefault(m =>
@@ -275,7 +279,7 @@ internal class AvaloniaReflection
                 return p.Length == 1 && p[0].ParameterType == typeof(Action);
             });
 
-
+        // Fallback: InvokeAsync(Action)
         _dispatcherPost ??= DispatcherType?.GetMethods(pub)
             .Where(m => m.Name == "InvokeAsync" && !m.IsGenericMethod)
             .FirstOrDefault(m =>
@@ -286,74 +290,74 @@ internal class AvaloniaReflection
 
         Logger.Log("Reflection", $"  Dispatcher.Post: {(_dispatcherPost != null ? _dispatcherPost.Name + "(" + _dispatcherPost.GetParameters().Length + ")" : "MISSING")}");
 
-
+        // VisualExtensions.GetVisualChildren(Visual)
         _getVisualChildren = VisualExtensionsType?.GetMethods(stat)
             .FirstOrDefault(m => m.Name == "GetVisualChildren" && m.GetParameters().Length == 1);
 
-
+        // Color.Parse(string)
         _colorParse = ColorType?.GetMethod("Parse", stat, null, new[] { typeof(string) }, null);
 
-
+        // Panel.Children
         _panelChildren = PanelType?.GetProperty("Children", pub);
 
-
+        // Control properties
         _controlTag = ControlType?.GetProperty("Tag", pub);
         _controlIsVisible = ControlType?.GetProperty("IsVisible", pub);
         _controlMargin = ControlType?.GetProperty("Margin", pub);
         _controlCursor = ControlType?.GetProperty("Cursor", pub);
 
-
+        // TextBlock properties
         _textBlockText = TextBlockType?.GetProperty("Text", pub);
         _textBlockFontSize = TextBlockType?.GetProperty("FontSize", pub);
         _textBlockFontWeight = TextBlockType?.GetProperty("FontWeight", pub);
         _textBlockForeground = TextBlockType?.GetProperty("Foreground", pub);
         _textBlockTextWrapping = TextBlockType?.GetProperty("TextWrapping", pub);
 
-
+        // Border properties
         _borderChild = BorderType?.GetProperty("Child", pub);
         _borderBackground = BorderType?.GetProperty("Background", pub);
         _borderCornerRadius = BorderType?.GetProperty("CornerRadius", pub);
         _borderBorderBrush = BorderType?.GetProperty("BorderBrush", pub);
         _borderBorderThickness = BorderType?.GetProperty("BorderThickness", pub);
 
-
+        // ScrollViewer
         _scrollViewerContent = ScrollViewerType?.GetProperty("Content", pub);
 
-
+        // StackPanel
         _stackPanelOrientation = StackPanelType?.GetProperty("Orientation", pub);
         _stackPanelSpacing = StackPanelType?.GetProperty("Spacing", pub);
 
-
+        // ContentControl
         _contentControlContent = ContentControlType?.GetProperty("Content", pub);
 
-
+        // Grid static methods
         _gridSetColumn = GridType?.GetMethod("SetColumn", stat);
         _gridGetColumn = GridType?.GetMethod("GetColumn", stat);
         _gridSetRow = GridType?.GetMethod("SetRow", stat);
         _gridGetRow = GridType?.GetMethod("GetRow", stat);
 
-
+        // ToggleSwitch
         _toggleSwitchIsChecked = ToggleSwitchType?.GetProperty("IsChecked", pub);
 
-
+        // TextBox
         var staticPub = BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy;
         _textBoxTextProperty = TextBoxType?.GetField("TextProperty", staticPub);
         _textBoxWatermarkProperty = TextBoxType?.GetField("WatermarkProperty", staticPub);
         _textBoxMaxLengthProperty = TextBoxType?.GetField("MaxLengthProperty", staticPub);
 
-
+        // OverlayLayer.GetOverlayLayer(Visual) - static method
         _overlayGetOverlayLayer = OverlayLayerType?.GetMethod("GetOverlayLayer", stat);
 
-
+        // Canvas.SetLeft / Canvas.SetTop - static methods
         _canvasSetLeft = CanvasType?.GetMethod("SetLeft", stat);
         _canvasSetTop = CanvasType?.GetMethod("SetTop", stat);
 
-
+        // Layoutable.Bounds (inherited by all controls via Control -> Layoutable)
         _layoutableBounds = ControlType?.GetProperty("Bounds", pub);
 
-
-
-
+        // TranslatePoint: try instance method on Visual first (Avalonia 11+),
+        // then fall back to static extension on VisualExtensions.
+        // Walk the Control type hierarchy to find it (may be on Visual base class).
         var translateSearch = ControlType;
         while (translateSearch != null && _translatePoint == null)
         {
@@ -363,7 +367,7 @@ internal class AvaloniaReflection
         }
         _translatePoint ??= VisualExtensionsType?.GetMethods(stat)
             .FirstOrDefault(m => m.Name == "TranslatePoint" && m.GetParameters().Length == 3);
-
+        // Last resort: search all Avalonia types for a matching TranslatePoint
         if (_translatePoint == null)
         {
             Logger.Log("Reflection", "  TranslatePoint: walking all Avalonia types...");
@@ -375,7 +379,7 @@ internal class AvaloniaReflection
                 {
                     foreach (var t in asm.GetTypes())
                     {
-                        if (t.IsAbstract && t.IsSealed)
+                        if (t.IsAbstract && t.IsSealed) // static class
                         {
                             var m = t.GetMethods(stat)
                                 .FirstOrDefault(mi => mi.Name == "TranslatePoint");
@@ -399,18 +403,18 @@ internal class AvaloniaReflection
             }
         }
 
-
+        // Resource system
         _appResources = ApplicationType?.GetProperty("Resources", pub);
-
+        // MergedDictionaries is on IResourceDictionary or ResourceDictionary
         if (IResourceDictionaryType != null)
             _resourcesMergedDicts = IResourceDictionaryType.GetProperty("MergedDictionaries", pub);
-
+        // Fallback: try on the concrete Resources object type later at runtime
 
         Logger.Log("Reflection", $"  ResourceDictionary: {(ResourceDictionaryType != null ? "OK" : "MISSING")}");
         Logger.Log("Reflection", $"  IResourceDictionary: {(IResourceDictionaryType != null ? "OK" : "MISSING")}");
         Logger.Log("Reflection", $"  App.Resources: {(_appResources != null ? "OK" : "MISSING")}");
 
-
+        // Opacity and IsHitTestVisible
         _controlOpacity = ControlType?.GetProperty("Opacity", pub)
             ?? VisualType?.GetProperty("Opacity", pub);
         _controlIsHitTestVisible = ControlType?.GetProperty("IsHitTestVisible", pub);
@@ -421,7 +425,7 @@ internal class AvaloniaReflection
         Logger.Log("Reflection", $"  TranslatePoint: {(_translatePoint != null ? $"OK ({(_translatePoint.IsStatic ? "static" : "instance")}, {_translatePoint.DeclaringType?.Name}.{_translatePoint.Name}({_translatePoint.GetParameters().Length} params))" : "MISSING")}");
     }
 
-
+    // ===== Core access =====
 
     public object? GetAppCurrent() => _appCurrent?.GetValue(null);
 
@@ -434,6 +438,10 @@ internal class AvaloniaReflection
         return _lifetimeMainWindow?.GetValue(lifetime);
     }
 
+    /// <summary>
+    /// Returns all open windows (main + popups). Avalonia popups like user profile
+    /// cards and context menus live in separate Window objects, not in MainWindow's tree.
+    /// </summary>
     public List<object> GetAllWindows()
     {
         var result = new List<object>();
@@ -461,6 +469,11 @@ internal class AvaloniaReflection
     private FieldInfo? _windowImplSInstances;
     private bool _windowImplResolved;
 
+    /// <summary>
+    /// Returns all open TopLevel instances (MainWindow + PopupRoot + any dialogs).
+    /// Uses Avalonia's internal WindowImpl.s_instances list to find all native windows,
+    /// then gets .Owner (IInputRoot = TopLevel) for each.
+    /// </summary>
     public List<object> GetAllTopLevels()
     {
         if (!_windowImplResolved)
@@ -473,7 +486,7 @@ internal class AvaloniaReflection
 
         if (_windowImplType == null || _windowImplOwner == null || _windowImplSInstances == null)
         {
-
+            // Fallback: just MainWindow
             var mw = GetMainWindow();
             if (mw != null) result.Add(mw);
             return result;
@@ -553,17 +566,17 @@ internal class AvaloniaReflection
         }
         else if (pcount == 2)
         {
-
-
+            // DispatcherPriority in Avalonia 11+ is a struct, not an enum.
+            // Get the "Normal" value via static property or field on the type.
             var priorityType = _dispatcherPost.GetParameters()[1].ParameterType;
             object? normalPriority = null;
 
-
+            // Try static property first (Avalonia 11+)
             var normalProp = priorityType.GetProperty("Normal", BindingFlags.Public | BindingFlags.Static);
             if (normalProp != null)
                 normalPriority = normalProp.GetValue(null);
 
-
+            // Try static field
             if (normalPriority == null)
             {
                 var normalField = priorityType.GetField("Normal", BindingFlags.Public | BindingFlags.Static);
@@ -571,18 +584,18 @@ internal class AvaloniaReflection
                     normalPriority = normalField.GetValue(null);
             }
 
-
+            // Try enum parse as fallback
             if (normalPriority == null && priorityType.IsEnum)
                 normalPriority = Enum.Parse(priorityType, "Normal");
 
-
+            // Last resort: use default value of the struct/enum
             if (normalPriority == null)
                 normalPriority = priorityType.IsValueType ? Activator.CreateInstance(priorityType) : null;
 
             if (normalPriority != null)
                 _dispatcherPost.Invoke(dispatcher, new object[] { action, normalPriority });
             else
-                action();
+                action(); // fallback: run inline
         }
         else
         {
@@ -607,9 +620,14 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Get logical children of a control. Popup controls are logical children,
+    /// not visual, so we need this to find open popups in the tree.
+    /// Uses ILogical.LogicalChildren or StyledElement.LogicalChildren.
+    /// </summary>
     public IEnumerable<object> GetLogicalChildren(object control)
     {
-
+        // Try LogicalChildren property (available on StyledElement/Control)
         var prop = control.GetType().GetProperty("LogicalChildren",
             BindingFlags.Public | BindingFlags.Instance);
         if (prop == null) yield break;
@@ -627,7 +645,7 @@ internal class AvaloniaReflection
         }
     }
 
-
+    // ===== Control creation =====
 
     public object? CreateTextBlock(string text, double fontSize = 14, string? foregroundHex = null, string? fontWeight = null)
     {
@@ -718,8 +736,8 @@ internal class AvaloniaReflection
             var tb = Activator.CreateInstance(TextBoxType);
             if (tb == null) return null;
 
-
-
+            // CLR property setters are trimmed in Root's single-file binary.
+            // Use Avalonia's SetValue(AvaloniaProperty, object) instead.
             if (watermark != null) SetAvaloniaProperty(tb, _textBoxWatermarkProperty, watermark);
             if (text != null) SetAvaloniaProperty(tb, _textBoxTextProperty, text);
             if (maxLength > 0) SetAvaloniaProperty(tb, _textBoxMaxLengthProperty, maxLength);
@@ -744,16 +762,21 @@ internal class AvaloniaReflection
         SetAvaloniaProperty(textBox, _textBoxTextProperty, text);
     }
 
+    /// <summary>
+    /// Set a value via the Avalonia property system, bypassing trimmed CLR setters.
+    /// avaloniaPropertyField is a FieldInfo for the static AvaloniaProperty (e.g. TextBox.TextProperty).
+    /// Uses SetValue(AvaloniaProperty, object?, BindingPriority) -- the 3-param non-generic overload.
+    /// </summary>
     private void SetAvaloniaProperty(object control, FieldInfo? avaloniaPropertyField, object value)
     {
         if (avaloniaPropertyField == null) return;
         var avProp = avaloniaPropertyField.GetValue(null);
         if (avProp == null) return;
 
-
+        // Ensure BindingPriority is resolved
         EnsureBindingPriorityResolved();
 
-
+        // Ensure the 3-param SetValue method is cached
         if (_setValueWithPriority == null && _bindingPriorityStyle != null)
         {
             var methods = control.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -780,6 +803,7 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>Resolve BindingPriority.LocalValue once.</summary>
     private void EnsureBindingPriorityResolved()
     {
         if (_priorityResolved) return;
@@ -789,19 +813,22 @@ internal class AvaloniaReflection
             var bpType = asm.GetType("Avalonia.Data.BindingPriority");
             if (bpType != null)
             {
-                _bindingPriorityStyle = Enum.ToObject(bpType, 0);
+                _bindingPriorityStyle = Enum.ToObject(bpType, 0); // LocalValue = 0
                 break;
             }
         }
     }
 
+    /// <summary>
+    /// Get a value via the Avalonia property system, bypassing trimmed CLR getters.
+    /// </summary>
     private object? GetAvaloniaProperty(object control, FieldInfo? avaloniaPropertyField)
     {
         if (avaloniaPropertyField == null) return null;
         var avProp = avaloniaPropertyField.GetValue(null);
         if (avProp == null) return null;
 
-
+        // Find GetValue(AvaloniaProperty) - non-generic, 1-param overload
         var methods = control.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.Name == "GetValue" && !m.IsGenericMethod && m.GetParameters().Length == 1);
         foreach (var method in methods)
@@ -838,8 +865,8 @@ internal class AvaloniaReflection
         try
         {
             var color = _colorParse.Invoke(null, new object[] { hex });
-
-
+            // SolidColorBrush(Color) constructor is trimmed in Root's single-file binary.
+            // Use parameterless constructor + Color property setter instead.
             var brush = Activator.CreateInstance(SolidColorBrushType);
             SolidColorBrushType.GetProperty("Color")?.SetValue(brush, color);
             return brush;
@@ -847,7 +874,7 @@ internal class AvaloniaReflection
         catch { return null; }
     }
 
-
+    // ===== Property setters =====
 
     public void SetMargin(object? control, double left, double top, double right, double bottom)
     {
@@ -860,7 +887,7 @@ internal class AvaloniaReflection
     {
         if (control == null || ThicknessType == null) return;
         var thickness = Activator.CreateInstance(ThicknessType, left, top, right, bottom);
-
+        // Padding exists on Border (Decorator), TemplatedControl, etc. - search the actual type
         var paddingProp = control.GetType().GetProperty("Padding");
         paddingProp?.SetValue(control, thickness);
     }
@@ -900,7 +927,7 @@ internal class AvaloniaReflection
     {
         if (control == null || FontWeightType == null) return;
 
-
+        // FontWeight in Avalonia is a struct with static properties (Bold, Normal, SemiBold, etc.)
         var weightProp = FontWeightType.GetProperty(weight, BindingFlags.Public | BindingFlags.Static);
         if (weightProp != null)
         {
@@ -908,7 +935,7 @@ internal class AvaloniaReflection
             return;
         }
 
-
+        // Try as field (some Avalonia versions use static readonly fields)
         var weightField = FontWeightType.GetField(weight, BindingFlags.Public | BindingFlags.Static);
         if (weightField != null)
         {
@@ -916,7 +943,7 @@ internal class AvaloniaReflection
             return;
         }
 
-
+        // Try enum parse
         try
         {
             var parsed = Enum.Parse(FontWeightType, weight);
@@ -925,6 +952,10 @@ internal class AvaloniaReflection
         catch { }
     }
 
+    /// <summary>
+    /// Set FontWeight by numeric value (e.g., 450 for between Normal/400 and Medium/500).
+    /// Avalonia FontWeight is a struct with a constructor taking int.
+    /// </summary>
     public void SetFontWeightNumeric(object? control, int weight)
     {
         if (control == null || FontWeightType == null) return;
@@ -981,7 +1012,7 @@ internal class AvaloniaReflection
         catch { }
     }
 
-
+    // ===== Text property access =====
 
     public string? GetText(object? control) => _textBlockText?.GetValue(control) as string;
     public double? GetFontSize(object? control) => _textBlockFontSize?.GetValue(control) as double?;
@@ -993,6 +1024,10 @@ internal class AvaloniaReflection
         return control.GetType().GetProperty("FontFamily")?.GetValue(control);
     }
 
+    /// <summary>
+    /// Set FontFamily on a TextBlock using an Avalonia font family string.
+    /// Supports both simple names ("CircularXX TT") and avares URIs.
+    /// </summary>
     public void SetFontFamily(object? control, object? fontFamily)
     {
         if (control == null || fontFamily == null) return;
@@ -1003,7 +1038,7 @@ internal class AvaloniaReflection
         catch { }
     }
 
-
+    // ===== Panel children helpers =====
 
     public IList? GetChildren(object? panel)
     {
@@ -1058,7 +1093,7 @@ internal class AvaloniaReflection
         catch { return 0; }
     }
 
-
+    // ===== Grid creation =====
 
     public object? CreateGrid()
     {
@@ -1066,20 +1101,23 @@ internal class AvaloniaReflection
         return Activator.CreateInstance(GridType);
     }
 
+    /// <summary>
+    /// Add a star-width column definition to a Grid.
+    /// </summary>
     public void AddGridColumn(object? grid, double starWidth = 1.0)
     {
         if (grid == null || ColumnDefinitionType == null || GridLengthType == null || GridUnitTypeEnum == null) return;
         try
         {
-
+            // GridUnitType: Auto=0, Pixel=1, Star=2 -- use Parse to avoid wrong-value bugs
             var starUnit = Enum.Parse(GridUnitTypeEnum, "Star");
-
+            // new GridLength(starWidth, GridUnitType.Star)
             var gridLength = Activator.CreateInstance(GridLengthType, starWidth, starUnit);
-
+            // new ColumnDefinition { Width = gridLength }
             var colDef = Activator.CreateInstance(ColumnDefinitionType);
             ColumnDefinitionType.GetProperty("Width")?.SetValue(colDef, gridLength);
 
-
+            // grid.ColumnDefinitions.Add(colDef)
             var colDefs = grid.GetType().GetProperty("ColumnDefinitions")?.GetValue(grid);
             if (colDefs is System.Collections.IList colList)
                 colList.Add(colDef);
@@ -1090,7 +1128,7 @@ internal class AvaloniaReflection
         }
     }
 
-
+    // ===== Type checking =====
 
     public bool IsTextBlock(object? obj) => obj != null && TextBlockType?.IsAssignableFrom(obj.GetType()) == true;
     public bool IsPanel(object? obj) => obj != null && PanelType?.IsAssignableFrom(obj.GetType()) == true;
@@ -1098,7 +1136,7 @@ internal class AvaloniaReflection
     public bool IsGrid(object? obj) => obj != null && GridType?.IsAssignableFrom(obj.GetType()) == true;
     public bool IsScrollViewer(object? obj) => obj != null && ScrollViewerType?.IsAssignableFrom(obj.GetType()) == true;
 
-
+    // ===== Event subscription via Expression.Lambda =====
 
     public void SubscribeEvent(object control, string eventName, Action callback)
     {
@@ -1131,14 +1169,18 @@ internal class AvaloniaReflection
         }
     }
 
+    // ===== Avalonia property ClearValue =====
 
-
+    /// <summary>
+    /// Calls ClearValue on an Avalonia control to remove a local value override,
+    /// allowing data bindings to reassert their values.
+    /// </summary>
     public bool ClearValue(object? control, string propertyFieldName)
     {
         if (control == null) return false;
         try
         {
-
+            // Find the static AvaloniaProperty field (e.g. ContentControl.ContentProperty)
             var field = control.GetType().GetField(propertyFieldName,
                 BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
             if (field == null)
@@ -1150,7 +1192,7 @@ internal class AvaloniaReflection
             var avaloniaProperty = field.GetValue(null);
             if (avaloniaProperty == null) return false;
 
-
+            // Find ClearValue(AvaloniaProperty) - non-generic overload
             var clearMethods = control.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m => m.Name == "ClearValue" && !m.IsGenericMethod && m.GetParameters().Length == 1);
 
@@ -1175,6 +1217,10 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Silent version of ClearValue for batch operations (e.g. theme revert walk).
+    /// Removes the local value override, letting DynamicResource bindings reassert.
+    /// </summary>
     public bool ClearValueSilent(object? control, string propertyFieldName)
     {
         if (control == null) return false;
@@ -1204,12 +1250,19 @@ internal class AvaloniaReflection
         catch { return false; }
     }
 
-
+    // ===== SetValue with BindingPriority =====
 
     private System.Reflection.MethodInfo? _setValueWithPriority;
     private object? _bindingPriorityStyle;
     private bool _priorityResolved;
 
+    /// <summary>
+    /// Set an Avalonia property value at Style priority (lower than LocalValue).
+    /// This allows hover/pressed style triggers to override our value,
+    /// then revert back to our themed value when the trigger deactivates.
+    /// propertyFieldName is the static field name (e.g. "BackgroundProperty").
+    /// Returns true if successful, false if fallback to CLR SetValue is needed.
+    /// </summary>
     public bool SetValueStylePriority(object control, string propertyFieldName, object? value)
     {
         try
@@ -1217,7 +1270,7 @@ internal class AvaloniaReflection
             EnsureBindingPriorityResolved();
             if (_bindingPriorityStyle == null) return false;
 
-
+            // Find the static AvaloniaProperty field
             var field = control.GetType().GetField(propertyFieldName,
                 BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
             if (field == null) return false;
@@ -1225,7 +1278,7 @@ internal class AvaloniaReflection
             var avaloniaProperty = field.GetValue(null);
             if (avaloniaProperty == null) return false;
 
-
+            // Find SetValue(AvaloniaProperty, object, BindingPriority)
             if (_setValueWithPriority == null)
             {
                 var methods = control.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -1253,9 +1306,13 @@ internal class AvaloniaReflection
         catch { return false; }
     }
 
+    /// <summary>
+    /// Map a property name to its Avalonia static property field name.
+    /// E.g. "Background" -> "BackgroundProperty"
+    /// </summary>
     public static string PropertyToFieldName(string propertyName) => propertyName + "Property";
 
-
+    // ===== MaxHeight helpers =====
 
     public void SetMaxHeight(object? control, double maxHeight)
     {
@@ -1275,7 +1332,7 @@ internal class AvaloniaReflection
         control.GetType().GetProperty("MaxHeight")?.SetValue(control, double.NaN);
     }
 
-
+    // ===== ContentControl helpers =====
 
     public object? GetContent(object? contentControl)
     {
@@ -1293,7 +1350,7 @@ internal class AvaloniaReflection
             contentControl.GetType().GetProperty("Content")?.SetValue(contentControl, content);
     }
 
-
+    // ===== ListBox helpers =====
 
     public int GetSelectedIndex(object? listBox)
     {
@@ -1309,13 +1366,13 @@ internal class AvaloniaReflection
         prop?.SetValue(listBox, index);
     }
 
-
+    // ===== Clipboard =====
 
     public void CopyToClipboard(object window, string text)
     {
         try
         {
-
+            // TopLevel.Clipboard in Avalonia 11+
             var clipboardProp = window.GetType().GetProperty("Clipboard");
             var clipboard = clipboardProp?.GetValue(window);
             if (clipboard == null)
@@ -1336,14 +1393,14 @@ internal class AvaloniaReflection
         }
     }
 
-
+    // ===== Parent access =====
 
     public object? GetParent(object? node)
     {
         if (node == null) return null;
         var type = node.GetType();
 
-
+        // Try VisualParent first, then Parent
         var vpProp = type.GetProperty("VisualParent");
         if (vpProp != null) return vpProp.GetValue(node);
 
@@ -1351,8 +1408,12 @@ internal class AvaloniaReflection
         return pProp?.GetValue(node);
     }
 
+    // ===== OverlayLayer / Canvas / Positioning =====
 
-
+    /// <summary>
+    /// Gets the OverlayLayer for a Visual (typically the Window).
+    /// OverlayLayer is a Canvas at the Window level, outside the normal visual tree.
+    /// </summary>
     public object? GetOverlayLayer(object visual)
     {
         if (_overlayGetOverlayLayer == null) return null;
@@ -1367,6 +1428,9 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Sets Canvas.Left and Canvas.Top attached properties for positioning in OverlayLayer.
+    /// </summary>
     public void SetCanvasPosition(object? control, double left, double top)
     {
         if (control == null) return;
@@ -1381,6 +1445,9 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Gets the Bounds (Rect) of a control. Returns (X, Y, Width, Height) or null.
+    /// </summary>
     public (double X, double Y, double W, double H)? GetBounds(object? control)
     {
         if (control == null || _layoutableBounds == null) return null;
@@ -1402,6 +1469,11 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Translates a point from one visual's coordinate space to another.
+    /// Handles both instance method (Avalonia 11+: visual.TranslatePoint(Point, Visual))
+    /// and static extension (VisualExtensions.TranslatePoint(Visual, Point, Visual)).
+    /// </summary>
     public (double X, double Y)? TranslatePoint(object from, double x, double y, object to)
     {
         if (_translatePoint == null || PointType == null) return null;
@@ -1412,21 +1484,21 @@ internal class AvaloniaReflection
             object? result;
             if (_translatePoint.IsStatic)
             {
-
+                // Static extension: TranslatePoint(Visual from, Point point, Visual to)
                 result = _translatePoint.Invoke(null, new[] { from, point, to });
             }
             else
             {
-
+                // Instance method: from.TranslatePoint(Point point, Visual to)
                 result = _translatePoint.Invoke(from, new[] { point, to });
             }
 
             if (result == null) return null;
 
-
+            // Result is Point? (nullable). Unwrap if needed.
             var resultType = result.GetType();
 
-
+            // Check if it's Nullable<Point>
             if (resultType.IsGenericType && resultType.GetGenericTypeDefinition() == typeof(Nullable<>))
             {
                 var hasValue = (bool)(resultType.GetProperty("HasValue")?.GetValue(result) ?? false);
@@ -1447,12 +1519,18 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Add a child to the OverlayLayer (which is a Panel/Canvas).
+    /// </summary>
     public void AddToOverlay(object? overlay, object? child)
     {
         if (overlay == null || child == null) return;
         GetChildren(overlay)?.Add(child);
     }
 
+    /// <summary>
+    /// Remove a child from the OverlayLayer.
+    /// </summary>
     public void RemoveFromOverlay(object? overlay, object? child)
     {
         if (overlay == null || child == null) return;
@@ -1460,7 +1538,7 @@ internal class AvaloniaReflection
         catch (Exception ex) { Logger.Log("Reflection", $"RemoveFromOverlay error: {ex.Message}"); }
     }
 
-
+    // ===== Width / Height / Opacity =====
 
     public void SetWidth(object? control, double width)
     {
@@ -1492,8 +1570,11 @@ internal class AvaloniaReflection
         return Activator.CreateInstance(CanvasType);
     }
 
+    // ===== Resource Dictionary System =====
 
-
+    /// <summary>
+    /// Gets Application.Current.Resources
+    /// </summary>
     public object? GetAppResources()
     {
         var app = GetAppCurrent();
@@ -1501,6 +1582,10 @@ internal class AvaloniaReflection
         return _appResources.GetValue(app);
     }
 
+    /// <summary>
+    /// Gets Application.Styles[index].Resources - where Root's theme colors live.
+    /// Style[0] is SimpleTheme with ThemeAccentColor, ThemeAccentBrush, etc.
+    /// </summary>
     public object? GetStyleResources(int styleIndex)
     {
         var app = GetAppCurrent();
@@ -1530,12 +1615,15 @@ internal class AvaloniaReflection
         return null;
     }
 
+    /// <summary>
+    /// Gets a resource value from a resource dictionary by key.
+    /// </summary>
     public object? GetResource(object? dict, string key)
     {
         if (dict == null) return null;
         try
         {
-
+            // Use TryGetValue or indexer
             var indexer = dict.GetType().GetProperty("Item",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
                 null, null, new[] { typeof(object) }, null);
@@ -1548,34 +1636,44 @@ internal class AvaloniaReflection
         return null;
     }
 
+    /// <summary>
+    /// Gets the MergedDictionaries collection from a resource dictionary object.
+    /// </summary>
     public IList? GetMergedDictionaries(object? resources)
     {
         if (resources == null) return null;
-
+        // Try cached property first
         if (_resourcesMergedDicts != null)
         {
             try { return _resourcesMergedDicts.GetValue(resources) as IList; }
             catch { }
         }
-
+        // Fallback: search on the actual type
         var prop = resources.GetType().GetProperty("MergedDictionaries",
             BindingFlags.Public | BindingFlags.Instance);
         return prop?.GetValue(resources) as IList;
     }
 
+    /// <summary>
+    /// Creates a new ResourceDictionary instance.
+    /// </summary>
     public object? CreateResourceDictionary()
     {
         if (ResourceDictionaryType == null) return null;
         return Activator.CreateInstance(ResourceDictionaryType);
     }
 
+    /// <summary>
+    /// Adds a key-value pair to a ResourceDictionary.
+    /// Uses the IDictionary indexer: dict[key] = value
+    /// </summary>
     public void AddResource(object? dict, string key, object? value)
     {
         if (dict == null || value == null) return;
         try
         {
-
-
+            // ResourceDictionary implements IDictionary<object, object?>
+            // Use the indexer via reflection
             var indexer = dict.GetType().GetProperty("Item",
                 BindingFlags.Public | BindingFlags.Instance,
                 null, null, new[] { typeof(object) }, null);
@@ -1585,7 +1683,7 @@ internal class AvaloniaReflection
                 return;
             }
 
-
+            // Fallback: try Add method
             var addMethod = dict.GetType().GetMethod("Add",
                 BindingFlags.Public | BindingFlags.Instance,
                 null, new[] { typeof(object), typeof(object) }, null);
@@ -1597,6 +1695,9 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Removes a key from a ResourceDictionary.
+    /// </summary>
     public bool RemoveResource(object? dict, string key)
     {
         if (dict == null) return false;
@@ -1615,6 +1716,9 @@ internal class AvaloniaReflection
         return false;
     }
 
+    /// <summary>
+    /// Parses a hex color string into an Avalonia Color struct.
+    /// </summary>
     public object? ParseColor(string hex)
     {
         if (_colorParse == null) return null;
@@ -1625,8 +1729,13 @@ internal class AvaloniaReflection
         catch { return null; }
     }
 
+    // ===== Linear Gradient Brush =====
 
-
+    /// <summary>
+    /// Creates a LinearGradientBrush with the specified start/end points and gradient stops.
+    /// startX/startY/endX/endY are 0-1 relative coordinates.
+    /// stops is an array of (hexColor, offset) tuples where offset is 0-1.
+    /// </summary>
     public object? CreateLinearGradientBrush(double startX, double startY, double endX, double endY,
         (string hex, double offset)[] stops)
     {
@@ -1636,12 +1745,12 @@ internal class AvaloniaReflection
             var brush = Activator.CreateInstance(LinearGradientBrushType);
             if (brush == null) return null;
 
-
+            // Set StartPoint and EndPoint as RelativePoint (using relative 0-1 coordinates)
             if (RelativePointType != null)
             {
                 object? startPoint = null, endPoint = null;
 
-
+                // Primary method: RelativePoint.Parse("X%,Y%") -- always produces Relative unit
                 var parseMethod = RelativePointType.GetMethod("Parse",
                     BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
                 if (parseMethod != null)
@@ -1659,7 +1768,7 @@ internal class AvaloniaReflection
                     }
                 }
 
-
+                // Fallback: constructor with Enum.Parse by name (not by int value)
                 if (startPoint == null)
                 {
                     var relUnitType = RelativeUnitType ?? RelativePointType.GetConstructors()
@@ -1689,7 +1798,7 @@ internal class AvaloniaReflection
                 Logger.Log("Reflection", $"LinearGradientBrush: start={startPoint != null} end={endPoint != null} method={(parseMethod != null ? "Parse" : "ctor")}");
             }
 
-
+            // Add gradient stops
             var gradientStops = brush.GetType().GetProperty("GradientStops")?.GetValue(brush);
             if (gradientStops == null && GradientStopsType != null)
             {
@@ -1720,6 +1829,9 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Set Background on a control using a pre-created brush object (not a hex string).
+    /// </summary>
     public void SetBackgroundBrush(object? control, object? brush)
     {
         if (control == null) return;
@@ -1727,6 +1839,10 @@ internal class AvaloniaReflection
         bgProp?.SetValue(control, brush);
     }
 
+    /// <summary>
+    /// Subscribe to a pointer event and extract the position relative to the control.
+    /// Callback receives (x, y) coordinates in the control's coordinate space.
+    /// </summary>
     public void SubscribePointerEvent(object control, string eventName, Action<double, double> callback)
     {
         try
@@ -1743,14 +1859,14 @@ internal class AvaloniaReflection
             var invokeMethod = handlerType.GetMethod("Invoke")!;
             var paramTypes = invokeMethod.GetParameters().Select(p => p.ParameterType).ToArray();
 
-
+            // Build: (sender, e) => { var pos = e.GetPosition(sender); callback(pos.X, pos.Y); }
             var p0 = Expression.Parameter(paramTypes[0], "sender");
             var p1 = Expression.Parameter(paramTypes[1], "e");
 
-
+            // Find GetPosition method on the event args type
             var getPositionMethod = paramTypes[1].GetMethod("GetPosition",
                 new[] { VisualType ?? typeof(object) });
-
+            // Fallback: try with IVisual or any single-param overload
             getPositionMethod ??= paramTypes[1].GetMethods()
                 .FirstOrDefault(m => m.Name == "GetPosition" && m.GetParameters().Length == 1);
 
@@ -1760,7 +1876,7 @@ internal class AvaloniaReflection
                 return;
             }
 
-
+            // Cast sender to the parameter type expected by GetPosition
             var castSender = Expression.Convert(p0, getPositionMethod.GetParameters()[0].ParameterType);
             var posExpr = Expression.Call(p1, getPositionMethod, castSender);
 
@@ -1784,18 +1900,24 @@ internal class AvaloniaReflection
         }
     }
 
+    /// <summary>
+    /// Sets ClipToBounds on a control to prevent child content from rendering outside bounds.
+    /// </summary>
     public void SetClipToBounds(object? control, bool clip)
     {
         if (control == null) return;
         control.GetType().GetProperty("ClipToBounds")?.SetValue(control, clip);
     }
 
+    /// <summary>
+    /// Enumerate all resource keys in a resource dictionary (for diagnostics).
+    /// </summary>
     public void EnumerateResources(object? resources, Action<string, object?> callback)
     {
         if (resources == null) return;
         try
         {
-
+            // Try IEnumerable<KeyValuePair<object, object?>>
             if (resources is IEnumerable enumerable)
             {
                 foreach (var item in enumerable)

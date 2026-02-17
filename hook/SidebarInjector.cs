@@ -1,5 +1,15 @@
 namespace Uprooted;
 
+/// <summary>
+/// Timer-based monitor that detects when the settings page is open and injects
+/// UPROOTED UI directly into Root's visual tree (Vencord-style).
+///
+/// Architecture:
+/// - Sidebar items injected into NavContainer StackPanel (below the ListBox)
+/// - Content pages placed directly into Root's content Panel
+/// - Back button PointerPressed intercepted to clean up BEFORE teardown
+///   (prevents the freeze caused by OnDetachedFromVisualTreeCore walking modified tree)
+/// </summary>
 internal class SidebarInjector
 {
     private const string InjectedTag = "uprooted-injected";
@@ -12,41 +22,41 @@ internal class SidebarInjector
     private Timer? _timer;
     private readonly object _window;
 
-
+    // Root's original controls (read + restore references)
     private object? _listBox;
     private object? _navContainer;
     private object? _contentPanel;
     private object? _sidebarGrid;
-    private object? _layoutContainer;
+    private object? _layoutContainer;                    // Main settings Grid (for save bar search)
 
+    // Injection state
+    private List<object> _injectedControls = new();   // All controls we added to NavContainer
+    private object? _scrollViewerWrapper;               // ScrollViewer wrapping NavContainer (if added)
+    private object? _originalVersionBorder;              // Saved reference for restoration
+    private object? _originalSignOutControl;             // Saved reference for restoration
+    private int _advancedIndex = -1;                     // "Advanced" position in ListBox (for diagnostics)
 
-    private List<object> _injectedControls = new();
-    private object? _scrollViewerWrapper;
-    private object? _originalVersionBorder;
-    private object? _originalSignOutControl;
-    private int _advancedIndex = -1;
+    // Content state
+    private object? _activeContentPage;                  // Our page currently in content Panel
+    private string? _activePage;                         // "uprooted" | "plugins" | "themes" | null
+    private int _lastListBoxIdx = -1;                    // For selection change detection
+    private bool _injected;                              // Whether we've injected
+    private int _aliveCheckCounter;                      // Throttle alive checks
+    private List<object> _hiddenContentChildren = new(); // Root's content children we hid (to restore later)
 
+    // Save bar (freeze prevention for Revert button)
+    private object? _saveBar;                            // Root's save bar container (hide when Uprooted pages active)
+    private object? _revertButton;                       // Revert button inside save bar (PointerPressed interception)
+    private bool _saveBarWasVisible = true;              // Original save bar visibility before we hid it
 
-    private object? _activeContentPage;
-    private string? _activePage;
-    private int _lastListBoxIdx = -1;
-    private bool _injected;
-    private int _aliveCheckCounter;
-    private List<object> _hiddenContentChildren = new();
+    // Native font for content pages
+    private object? _nativeFontFamily;                   // CircularXX TT font from native controls
 
+    // Version box injection (grey box at bottom of sidebar)
+    private object? _versionTextBlock;                   // "Uprooted 0.2.3" TextBlock in version box
+    private object? _versionContainer;                   // StackPanel containing version texts
 
-    private object? _saveBar;
-    private object? _revertButton;
-    private bool _saveBarWasVisible = true;
-
-
-    private object? _nativeFontFamily;
-
-
-    private object? _versionTextBlock;
-    private object? _versionContainer;
-
-
+    // Thread safety
     private int _injecting;
     private bool _diagnosticsDone;
 
@@ -58,11 +68,13 @@ internal class SidebarInjector
         _themeEngine = themeEngine;
         _window = mainWindow;
 
-
+        // Populate default plugin entries if not already set
         if (!_settings.Plugins.ContainsKey("sentry-blocker"))
             _settings.Plugins["sentry-blocker"] = true;
         if (!_settings.Plugins.ContainsKey("themes"))
             _settings.Plugins["themes"] = true;
+        if (!_settings.Plugins.ContainsKey("content-filter"))
+            _settings.Plugins["content-filter"] = _settings.NsfwFilterEnabled;
     }
 
     public void StartMonitoring()
@@ -105,7 +117,7 @@ internal class SidebarInjector
     {
         if (_injected)
         {
-
+            // Poll ListBox selection every tick for responsiveness
             if (_listBox != null)
             {
                 int currentIdx = _r.GetSelectedIndex(_listBox);
@@ -117,8 +129,8 @@ internal class SidebarInjector
                 }
             }
 
-
-
+            // Throttled alive check: every 5 ticks (~1 second), verify settings page still open.
+            // Uses lightweight text search instead of full FindSettingsLayout to avoid chatty logs.
             _aliveCheckCounter++;
             if (_aliveCheckCounter % 5 == 0)
             {
@@ -133,7 +145,7 @@ internal class SidebarInjector
             return;
         }
 
-
+        // Not injected -- check if settings page just opened
         var newLayout = _walker.FindSettingsLayout(_window);
         if (newLayout == null) return;
 
@@ -149,18 +161,18 @@ internal class SidebarInjector
         InjectIntoSettings(newLayout);
     }
 
-
+    // ===== Core injection =====
 
     private void InjectIntoSettings(SettingsLayout layout)
     {
         try
         {
-
-
+            // Guard: check if we already have injected controls in the tree
+            // (protects against re-injection from false detach detection)
             if (_walker.HasTaggedDescendant(layout.NavContainer, InjectedTag))
             {
                 Logger.Log("Injector", "Skipping injection: already-injected controls found in NavContainer");
-
+                // Re-acquire references and mark as injected
                 _navContainer = layout.NavContainer;
                 _listBox = layout.ListBox;
                 _contentPanel = layout.ContentArea;
@@ -170,7 +182,7 @@ internal class SidebarInjector
                 return;
             }
 
-
+            // Store references
             _listBox = layout.ListBox;
             _navContainer = layout.NavContainer;
             _contentPanel = layout.ContentArea;
@@ -180,10 +192,10 @@ internal class SidebarInjector
             _originalVersionBorder = layout.VersionBorder;
             _originalSignOutControl = layout.SignOutControl;
 
-
+            // Step 0.5: Store native font family for content pages
             _nativeFontFamily = _r.GetFontFamily(layout.AppSettingsText);
 
-
+            // Step 1: Handle save bar (freeze prevention for Revert button)
             _saveBar = layout.SaveBar;
             if (_saveBar != null)
             {
@@ -203,7 +215,7 @@ internal class SidebarInjector
                 }
             }
 
-
+            // Step 2: Save and remove version Border and sign-out from NavContainer
             if (_navContainer != null)
             {
                 if (_originalSignOutControl != null)
@@ -212,16 +224,16 @@ internal class SidebarInjector
                     _r.RemoveChild(_navContainer, _originalVersionBorder);
             }
 
-
+            // Step 3: Build and insert our controls into NavContainer
             BuildAndInsertNavItems(layout);
 
-
+            // Step 4: Wrap NavContainer in ScrollViewer for sidebar scrolling
             WrapInScrollViewer();
 
-
+            // Step 5: Inject version text into the grey version box
             InjectVersionText();
 
-
+            // Step 6: Record current ListBox selection
             _lastListBoxIdx = _listBox != null ? _r.GetSelectedIndex(_listBox) : -1;
 
             _injected = true;
@@ -242,10 +254,10 @@ internal class SidebarInjector
 
         try
         {
-
+            // Step 1: Unwrap ScrollViewer if we added one
             UnwrapScrollViewer();
 
-
+            // Step 2: Remove all injected controls from NavContainer
             if (_navContainer != null)
             {
                 foreach (var ctrl in _injectedControls)
@@ -255,7 +267,7 @@ internal class SidebarInjector
                 }
             }
 
-
+            // Step 3: Re-add original version Border and sign-out to NavContainer
             if (_navContainer != null)
             {
                 if (_originalVersionBorder != null)
@@ -264,14 +276,14 @@ internal class SidebarInjector
                     _r.AddChild(_navContainer, _originalSignOutControl);
             }
 
-
+            // Step 4: Remove version text from grey version box
             RemoveVersionText();
 
-
+            // Step 5: Restore save bar to its original visibility
             if (_saveBar != null)
                 _r.SetIsVisible(_saveBar, _saveBarWasVisible);
 
-
+            // Step 6: Remove our content from content Panel
             RemoveContentPage();
         }
         catch (Exception ex)
@@ -307,37 +319,37 @@ internal class SidebarInjector
         _aliveCheckCounter = 0;
     }
 
-
+    // ===== NavContainer item building =====
 
     private void BuildAndInsertNavItems(SettingsLayout layout)
     {
         if (_navContainer == null) return;
 
-
-
-
-
+        // Wrap all our items in a single Spacing=0 StackPanel.
+        // The NavContainer StackPanel may have non-zero Spacing that adds gaps
+        // between its direct children. By wrapping, only one gap applies (before
+        // our container), not between each individual nav item.
         var container = _r.CreateStackPanel(vertical: true, spacing: 0);
         if (container == null) return;
         _r.SetTag(container, InjectedTag);
 
-
+        // Get styling info from the "APP SETTINGS" header
         var headerFontSize = _r.GetFontSize(layout.AppSettingsText) ?? 11;
         var headerFontWeight = _r.GetFontWeight(layout.AppSettingsText);
         var headerForeground = _r.GetForeground(layout.AppSettingsText);
         var nativeFontFamily = _r.GetFontFamily(layout.AppSettingsText);
 
-
+        // Get exact nav item foreground + font weight from a native ListBoxItem TextBlock
         object? nativeNavForeground = null;
         object? nativeNavFontWeight = null;
         if (layout.ListBox != null)
         {
-
+            // Find a real nav item TextBlock (e.g. "Account" or "Notifications")
             foreach (var node in _walker.DescendantsDepthFirst(layout.ListBox))
             {
                 if (!_r.IsTextBlock(node)) continue;
                 var fs = _r.GetFontSize(node);
-                if (fs is 14.0)
+                if (fs is 14.0) // Nav items use FontSize=14
                 {
                     nativeNavForeground = _r.GetForeground(node);
                     nativeNavFontWeight = _r.GetFontWeight(node);
@@ -347,12 +359,12 @@ internal class SidebarInjector
             }
         }
 
-
+        // 1. UPROOTED section header (matching "APP SETTINGS" style)
         var sectionHeader = BuildSectionHeader("UPROOTED", headerFontSize, headerFontWeight, headerForeground, nativeFontFamily);
         if (sectionHeader != null)
             _r.AddChild(container, sectionHeader);
 
-
+        // 2. Nav items: Uprooted, Plugins, Themes
         foreach (var (label, page) in new[] { ("Uprooted", "uprooted"), ("Plugins", "plugins"), ("Themes", "themes") })
         {
             var item = BuildNavItem(label, page, nativeFontFamily, nativeNavForeground, nativeNavFontWeight);
@@ -360,28 +372,28 @@ internal class SidebarInjector
                 _r.AddChild(container, item);
         }
 
-
+        // Add the container as a single child of NavContainer
         _r.AddChild(_navContainer, container);
         _injectedControls.Add(container);
 
-
+        // 3. Re-add original version Border
         if (_originalVersionBorder != null)
         {
             _r.AddChild(_navContainer, _originalVersionBorder);
-
+            // Don't add to _injectedControls -- it's Root's original control
         }
 
-
+        // 4. Re-add original sign-out
         if (_originalSignOutControl != null)
         {
             _r.AddChild(_navContainer, _originalSignOutControl);
-
+            // Don't add to _injectedControls -- it's Root's original control
         }
     }
 
     private object? BuildSectionHeader(string text, double fontSize, object? fontWeight, object? foreground, object? fontFamily)
     {
-
+        // Match Root's "APP SETTINGS" header: StackPanel M=12,12,12,0 inside a 40px-tall ListBoxItem
         var container = _r.CreateStackPanel(vertical: false, spacing: 0);
         if (container == null) return null;
         _r.SetMargin(container, 12, 12, 12, 0);
@@ -405,33 +417,33 @@ internal class SidebarInjector
     private object? BuildNavItem(string label, string pageName, object? fontFamily,
         object? nativeForeground = null, object? nativeFontWeight = null)
     {
-
-
-
-
-
-
-
-
-
-
-
-
+        // Match Root's native ListBoxItem structure:
+        //   ListBoxItem (250x40)
+        //     Panel (M=0,2,0,2, 250x36)
+        //       ContentPresenter > MenuItemPageContainerView > ContentPresenter >
+        //         StackPanel (M=12,8,12,8, 226x20) > TextBlock (FontSize=14, FW=450, VA=Center)
+        //       Border (H=36, BG=Transparent, CR=12)  <- hover/selection highlight
+        //
+        // Our equivalent:
+        //   Panel (H=40, tag, cursor, BG=transparent)
+        //     Panel (M=0,2,0,2)  <- vertical spacing like native
+        //       Border (H=36, CR=12)  <- highlight
+        //       TextBlock (M=12,0,12,0, VA=Center, FW=450)  <- content
 
         var outerPanel = _r.CreatePanel();
         if (outerPanel == null) return null;
         _r.SetTag(outerPanel, $"uprooted-nav-{pageName}");
         _r.SetCursorHand(outerPanel);
-        _r.SetHeight(outerPanel, 40);
-        _r.SetBackground(outerPanel, "#00000000");
+        _r.SetHeight(outerPanel, 40); // Match native ListBoxItem height exactly
+        _r.SetBackground(outerPanel, "#00000000"); // Transparent BG required for hit-testing (pointer events)
 
-
+        // Inner panel with vertical spacing matching native ListBoxItem
         var innerPanel = _r.CreatePanel();
         if (innerPanel != null)
         {
             _r.SetMargin(innerPanel, 0, 2, 0, 2);
 
-
+            // Highlight border (behind content, full width, rounded corners)
             var highlight = _r.CreateBorder(cornerRadius: 12);
             if (highlight != null)
             {
@@ -440,11 +452,11 @@ internal class SidebarInjector
                 _r.AddChild(innerPanel, highlight);
             }
 
-
+            // Text label - matching native font and positioning exactly
             var textBlock = _r.CreateTextBlock(label, 14);
             if (textBlock != null)
             {
-
+                // Apply exact native foreground and font weight (copied from real ListBoxItem)
                 if (nativeForeground != null)
                     _r.TextBlockType?.GetProperty("Foreground")?.SetValue(textBlock, nativeForeground);
                 else
@@ -464,7 +476,7 @@ internal class SidebarInjector
 
             _r.AddChild(outerPanel, innerPanel);
 
-
+            // Hover events on the outer panel (captures full area)
             _r.SubscribeEvent(outerPanel, "PointerEntered", () =>
             {
                 if (_activePage != pageName && highlight != null)
@@ -478,7 +490,7 @@ internal class SidebarInjector
             });
         }
 
-
+        // Click handler
         _r.SubscribeEvent(outerPanel, "PointerPressed", () =>
         {
             OnNavItemClicked(pageName);
@@ -487,7 +499,7 @@ internal class SidebarInjector
         return outerPanel;
     }
 
-
+    // ===== Content management =====
 
     private void OnNavItemClicked(string pageName)
     {
@@ -496,7 +508,7 @@ internal class SidebarInjector
             Logger.Log("Injector", $"Nav item clicked: {pageName}");
             if (_activePage == pageName) return;
 
-
+            // Remove current content (without restoring back button -- we'll keep it hidden)
             if (_activeContentPage != null && _contentPanel != null)
             {
                 try { _r.RemoveChild(_contentPanel, _activeContentPage); }
@@ -504,10 +516,10 @@ internal class SidebarInjector
             }
             _activeContentPage = null;
 
-
+            // Build new page (pass ThemeEngine and rebuild callback for theme switching)
             Action rebuildCurrentPage = () =>
             {
-
+                // Remove current content and rebuild the same page
                 if (_activeContentPage != null && _contentPanel != null)
                 {
                     try { _r.RemoveChild(_contentPanel, _activeContentPage); }
@@ -517,7 +529,7 @@ internal class SidebarInjector
                 _activePage = null;
                 OnNavItemClicked(pageName);
 
-
+                // Trigger a visual tree walk after theme change
                 _themeEngine.ScheduleWalkBurst();
             };
             var page = ContentPages.BuildPage(pageName, _r, _settings, _nativeFontFamily,
@@ -528,10 +540,10 @@ internal class SidebarInjector
                 return;
             }
 
-
+            // Add page to content Panel (hide Root's children instead of removing them)
             if (_contentPanel != null)
             {
-
+                // Hide all existing Root children so we can show our page
                 _hiddenContentChildren.Clear();
                 var children = _r.GetChildren(_contentPanel);
                 if (children != null)
@@ -549,15 +561,15 @@ internal class SidebarInjector
                 _activeContentPage = page;
             }
 
-
+            // Deselect Root's ListBox items
             if (_listBox != null)
             {
                 _r.SetSelectedIndex(_listBox, -1);
                 _lastListBoxIdx = -1;
             }
 
-
-
+            // Hide save bar on Uprooted pages (prevents Revert freeze)
+            // Search dynamically since save bar may appear after injection
             FindAndHideSaveBar();
 
             _activePage = pageName;
@@ -568,14 +580,14 @@ internal class SidebarInjector
             else
                 Logger.Log("Injector", $"Content page '{pageName}' built but contentPanel is null (stale state)");
 
-
-
-
+            // Schedule delayed save bar search: deselecting Root's ListBox triggers
+            // Root's change detection which creates the save bar ASYNCHRONOUSLY.
+            // We need to check again after Root has had time to create it.
             ScheduleDelayedSaveBarHide();
         }
         catch (Exception ex)
         {
-            Logger.Log("Injector", $"OnNavItemClicked error: {ex}");
+            Logger.LogException("Injector", $"OnNavItemClicked('{pageName}')", ex);
         }
     }
 
@@ -589,7 +601,7 @@ internal class SidebarInjector
         _activeContentPage = null;
         _activePage = null;
 
-
+        // Restore Root's hidden content children
         foreach (var child in _hiddenContentChildren)
         {
             try { _r.SetIsVisible(child, true); }
@@ -597,7 +609,7 @@ internal class SidebarInjector
         }
         _hiddenContentChildren.Clear();
 
-
+        // Restore save bar to its original visibility state
         if (_saveBar != null)
             _r.SetIsVisible(_saveBar, _saveBarWasVisible);
 
@@ -609,7 +621,7 @@ internal class SidebarInjector
         var children = _r.GetChildren(panel);
         if (children == null) return;
 
-
+        // Remove children in reverse to avoid index shifting
         for (int i = children.Count - 1; i >= 0; i--)
         {
             try { children.RemoveAt(i); }
@@ -617,7 +629,7 @@ internal class SidebarInjector
         }
     }
 
-
+    // ===== ScrollViewer wrapping =====
 
     private void WrapInScrollViewer()
     {
@@ -625,26 +637,26 @@ internal class SidebarInjector
 
         try
         {
-
+            // Create ScrollViewer to wrap the NavContainer StackPanel
             var scrollViewer = _r.CreateScrollViewer();
             if (scrollViewer == null) return;
 
-
+            // Copy Grid row from NavContainer
             int navRow = _r.GetGridRow(_navContainer);
 
-
+            // Remove NavContainer from its parent Grid
             _r.RemoveChild(_sidebarGrid, _navContainer);
 
-
+            // Set NavContainer as ScrollViewer content
             _r.SetScrollViewerContent(scrollViewer, _navContainer);
 
-
+            // Set Grid.Row on ScrollViewer
             _r.SetGridRow(scrollViewer, navRow);
 
-
+            // Add ScrollViewer to parent Grid
             _r.AddChild(_sidebarGrid, scrollViewer);
 
-
+            // Hide scrollbar for clean look
             scrollViewer.GetType().GetProperty("VerticalScrollBarVisibility")?.SetValue(
                 scrollViewer,
                 Enum.Parse(scrollViewer.GetType().Assembly.GetType("Avalonia.Controls.Primitives.ScrollBarVisibility")
@@ -656,7 +668,7 @@ internal class SidebarInjector
         catch (Exception ex)
         {
             Logger.Log("Injector", $"WrapInScrollViewer error: {ex.Message}");
-
+            // If wrapping fails, try to restore NavContainer to parent
             if (_sidebarGrid != null && _navContainer != null)
             {
                 try { _r.AddChild(_sidebarGrid, _navContainer); }
@@ -673,13 +685,13 @@ internal class SidebarInjector
         {
             int navRow = _r.GetGridRow(_scrollViewerWrapper);
 
-
+            // Remove ScrollViewer from Grid
             _r.RemoveChild(_sidebarGrid, _scrollViewerWrapper);
 
-
+            // Clear ScrollViewer content
             _r.SetScrollViewerContent(_scrollViewerWrapper, null);
 
-
+            // Restore Grid.Row and add NavContainer back
             _r.SetGridRow(_navContainer, navRow);
             _r.AddChild(_sidebarGrid, _navContainer);
 
@@ -692,21 +704,25 @@ internal class SidebarInjector
         }
     }
 
+    // ===== Version box injection =====
 
-
+    /// <summary>
+    /// Inject "Uprooted 0.2.3" into the grey version info box at the bottom of the sidebar.
+    /// The box lives in SidebarGrid Row=1 and contains "Root Version: X.Y.Z" and "System Info: ...".
+    /// </summary>
     private void InjectVersionText()
     {
         if (_sidebarGrid == null) return;
 
         try
         {
-
+            // Find the StackPanel containing "Root Version:" text inside SidebarGrid Row=1
             object? versionStackPanel = null;
             foreach (var child in _r.GetVisualChildren(_sidebarGrid))
             {
                 if (_r.GetGridRow(child) != 1) continue;
 
-
+                // Search this subtree for the TextBlock containing "Root Version"
                 foreach (var node in _walker.DescendantsDepthFirst(child))
                 {
                     if (!_r.IsTextBlock(node)) continue;
@@ -726,7 +742,7 @@ internal class SidebarInjector
                 return;
             }
 
-
+            // Create "Uprooted 0.2.3" TextBlock matching existing style (FontSize=10, Fg=#66f2f2f2)
             var versionText = _r.CreateTextBlock($"Uprooted {_settings.Version}", 10, "#66f2f2f2");
             if (versionText == null) return;
 
@@ -734,7 +750,7 @@ internal class SidebarInjector
             _versionTextBlock = versionText;
             _versionContainer = versionStackPanel;
 
-
+            // Intercept version copy button to include Uprooted version in clipboard
             var versionButton = FindAncestorOfType(versionStackPanel, "Button");
             if (versionButton != null)
             {
@@ -784,7 +800,7 @@ internal class SidebarInjector
         _versionContainer = null;
     }
 
-
+    // ===== Helpers =====
 
     private object? FindAncestorOfType(object node, string typeName)
     {
@@ -798,6 +814,9 @@ internal class SidebarInjector
         return null;
     }
 
+    /// <summary>
+    /// Search for Root's save bar and hide it if found. Also subscribes Revert button handler.
+    /// </summary>
     private void FindAndHideSaveBar()
     {
         if (_saveBar == null && _layoutContainer != null)
@@ -824,13 +843,18 @@ internal class SidebarInjector
         }
     }
 
+    /// <summary>
+    /// Schedule delayed save bar search+hide. Root creates the save bar ASYNCHRONOUSLY after
+    /// we deselect its ListBox (which triggers its change detection). We need to poll briefly
+    /// to catch it after Root has had time to create it.
+    /// </summary>
     private void ScheduleDelayedSaveBarHide()
     {
-        if (_saveBar != null) return;
+        if (_saveBar != null) return; // Already found, nothing to do
 
         System.Threading.ThreadPool.QueueUserWorkItem(_ =>
         {
-
+            // Check at 200ms, 500ms, 1000ms after the nav click
             int elapsed = 0;
             foreach (var checkAt in new[] { 200, 500, 1000 })
             {
@@ -869,13 +893,16 @@ internal class SidebarInjector
         }
     }
 
+    // ===== Diagnostics =====
 
-
+    /// <summary>
+    /// Recon: dump ListBoxItem styling and section header details for pixel-perfect matching.
+    /// </summary>
     private void DumpVersionRecon(SettingsLayout layout)
     {
         Logger.Log("Recon", "=== STYLE RECON ===");
 
-
+        // 1. APP SETTINGS header: exact font, margin, padding, parent chain
         Logger.Log("Recon", "--- Section header: APP SETTINGS ---");
         var hdr = layout.AppSettingsText;
         Logger.Log("Recon", $"Text: \"{_r.GetText(hdr)}\"");
@@ -885,7 +912,7 @@ internal class SidebarInjector
         Logger.Log("Recon", $"  Foreground: {_r.GetForeground(hdr)}");
         Logger.Log("Recon", $"  Margin: {GetPropStr(hdr, "Margin")}");
         Logger.Log("Recon", $"  Bounds: {BoundsStr(_r.GetBounds(hdr))}");
-
+        // Walk up 4 parents to see containers/margins
         var p = _r.GetParent(hdr);
         for (int d = 0; d < 6 && p != null; d++)
         {
@@ -894,14 +921,14 @@ internal class SidebarInjector
             p = _r.GetParent(p);
         }
 
-
+        // 1b. NavContainer StackPanel properties
         if (layout.NavContainer != null)
         {
             var spacingVal = layout.NavContainer.GetType().GetProperty("Spacing")?.GetValue(layout.NavContainer);
             Logger.Log("Recon", $"NavContainer Spacing: {spacingVal}");
         }
 
-
+        // 2. First 3 ListBoxItems: full visual tree for style matching
         Logger.Log("Recon", "");
         Logger.Log("Recon", "--- ListBox items (first 3 + selected) ---");
         if (layout.ListBox != null)
@@ -932,7 +959,7 @@ internal class SidebarInjector
                         Logger.Log("Recon", $"    Padding: {GetPropStr(item, "Padding")}");
                         Logger.Log("Recon", $"    MinHeight: {GetPropStr(item, "MinHeight")}");
                         Logger.Log("Recon", $"    Height: {GetPropStr(item, "Height")}");
-
+                        // Deep dump visual tree with all style props (depth 10 to reach TextBlock)
                         DumpTreeDetailed(item, 2, 10);
                     }
                     itemIdx++;
@@ -941,7 +968,7 @@ internal class SidebarInjector
             Logger.Log("Recon", $"  Total items: {itemIdx}");
         }
 
-
+        // 3. ListBox parent chain for understanding x-offset
         Logger.Log("Recon", "");
         Logger.Log("Recon", "--- ListBox parent chain (for x-offset context) ---");
         if (layout.ListBox != null)
@@ -997,6 +1024,7 @@ internal class SidebarInjector
         catch { return "err"; }
     }
 
+    /// <summary>Detailed tree dump with ALL style properties for pixel-perfect matching.</summary>
     private void DumpTreeDetailed(object node, int depth, int maxDepth)
     {
         if (depth > maxDepth) return;
@@ -1005,13 +1033,13 @@ internal class SidebarInjector
         var b = _r.GetBounds(node);
         var props = new List<string> { BoundsStr(b) };
 
-
+        // Margin/Padding
         var m = GetPropStr(node, "Margin");
         var p = GetPropStr(node, "Padding");
         if (m != "0,0,0,0" && m != "0" && m != "null") props.Add($"M={m}");
         if (p != "0,0,0,0" && p != "0" && p != "null") props.Add($"P={p}");
 
-
+        // Size
         var w = GetPropStr(node, "Width");
         var h = GetPropStr(node, "Height");
         var minH = GetPropStr(node, "MinHeight");
@@ -1019,10 +1047,10 @@ internal class SidebarInjector
         if (h != "NaN" && h != "null") props.Add($"H={h}");
         if (minH != "0" && minH != "null" && minH != "NaN") props.Add($"MinH={minH}");
 
-
+        // Background
         try { var bg = node.GetType().GetProperty("Background")?.GetValue(node); if (bg != null) props.Add($"BG={bg}"); } catch { }
 
-
+        // Border-specific
         if (_r.IsBorder(node))
         {
             try
@@ -1035,7 +1063,7 @@ internal class SidebarInjector
             catch { }
         }
 
-
+        // TextBlock-specific
         if (_r.IsTextBlock(node))
         {
             props.Add($"Text=\"{_r.GetText(node)}\"");
@@ -1048,7 +1076,7 @@ internal class SidebarInjector
             if (lh != "NaN" && lh != "null" && lh != "0") props.Add($"LineHeight={lh}");
         }
 
-
+        // HorizontalAlignment/VerticalAlignment
         var ha = GetPropStr(node, "HorizontalAlignment");
         var va = GetPropStr(node, "VerticalAlignment");
         if (ha != "Stretch" && ha != "null") props.Add($"HA={ha}");

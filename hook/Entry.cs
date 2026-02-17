@@ -3,6 +3,11 @@ using Uprooted;
 
 namespace UprootedHook;
 
+/// <summary>
+/// Entry point for profiler-based IL injection.
+/// The profiler injects IL that calls Assembly.LoadFrom + Assembly.CreateInstance("UprootedHook.Entry"),
+/// which triggers the ModuleInitializer and/or constructor to start the Uprooted injection.
+/// </summary>
 public class Entry
 {
     private static int _initialized = 0;

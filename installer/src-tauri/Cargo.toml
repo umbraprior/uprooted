@@ -1,6 +1,6 @@
 [package]
 name = "uprooted-installer"
-version = "0.1.95"
+version = "0.2.3"
 edition = "2021"
 
 [dependencies]

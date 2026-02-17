@@ -210,7 +210,7 @@ var Uprooted = (() => {
   var sentryBlockerPlugin = {
     name: "sentry-blocker",
     description: "Blocks Sentry error tracking to protect your privacy",
-    version: "0.1.95",
+    version: "0.2.2",
     authors: [{ name: "Uprooted" }],
     start() {
       blockedCount = 0;
@@ -418,7 +418,7 @@ var Uprooted = (() => {
   var themes_default2 = {
     name: "themes",
     description: "Built-in theme engine for Root Communications",
-    version: "0.1.95",
+    version: "0.2.2",
     authors: [{ name: "Uprooted" }],
     settings: {
       theme: {
@@ -1171,7 +1171,7 @@ var Uprooted = (() => {
   var settings_panel_default = {
     name: "settings-panel",
     description: "In-app settings panel injected into Root's settings sidebar",
-    version: "0.1.95",
+    version: "0.2.2",
     authors: [{ name: "Uprooted" }],
     css: void 0,
     // CSS is loaded from panel.css via the build system
@@ -1189,7 +1189,7 @@ var Uprooted = (() => {
   };
 
   // src/core/preload.ts
-  var VERSION = true ? "0.1.95" : "dev";
+  var VERSION = true ? "0.2.2" : "dev";
   function main() {
     try {
       const settings = window.__UPROOTED_SETTINGS__;

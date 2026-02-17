@@ -80,7 +80,7 @@ function render(): void {
     <p class="notice">restart root to apply theme changes.</p>
   `;
 
-
+  // Bind click handlers
   for (const card of container.querySelectorAll<HTMLElement>(".theme-card")) {
     card.addEventListener("click", async () => {
       const name = card.dataset.theme!;
@@ -116,7 +116,7 @@ export async function init(el: HTMLElement): Promise<void> {
     themes = [];
   }
 
-
+  // Get current active theme from settings
   try {
     const settings = await loadSettings();
     const themeConfig = settings.plugins?.themes?.config;
@@ -124,7 +124,7 @@ export async function init(el: HTMLElement): Promise<void> {
       activeTheme = themeConfig.theme;
     }
   } catch {
-
+    // use default
   }
 
   selectedTheme = themes.find((t) => t.name === activeTheme) ?? themes[0] ?? null;

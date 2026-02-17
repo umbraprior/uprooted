@@ -1,3 +1,22 @@
+#define _GNU_SOURCE  /* strcasestr */
+
+/*
+ * Uprooted .NET CoreCLR Profiler - IL Injection (Linux)
+ *
+ * Linux port of uprooted_profiler.c. Uses POSIX APIs instead of Win32.
+ * CoreCLR's profiling API is cross-platform — same vtable layout, same
+ * IL injection strategy, same metadata APIs. Only OS-level APIs differ.
+ *
+ * Strategy (identical to Windows):
+ * 1. Prof_Initialize: set event mask for JIT + module loads
+ * 2. ModuleLoadFinished: track CoreLib; try each app/3rd-party module as injection target
+ * 3. PrepareTargetModule: create metadata tokens + inject IL immediately via SetILFunctionBody
+ * 4. IL calls Assembly.LoadFrom("path/to/UprootedHook.dll") + CreateInstance("UprootedHook.Entry")
+ * 5. Our managed code spawns background thread to inject Avalonia UI
+ *
+ * Build: gcc -shared -fPIC -O2 -o libuprooted_profiler.so tools/uprooted_profiler_linux.c
+ */
+
 #include <dlfcn.h>
 #include <unistd.h>
 #include <sys/time.h>
@@ -8,8 +27,13 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <time.h>
+#include <strings.h>   /* strcasecmp */
 
-typedef uint16_t WCHAR;
+/* ---- Platform type mappings ---- */
+/* CoreCLR uses these types on all platforms. On Linux, we define them
+ * in terms of standard C types instead of Windows typedefs. */
+
+typedef uint16_t WCHAR;          /* CoreCLR metadata is always UTF-16 */
 typedef const WCHAR* LPCWSTR;
 typedef uint8_t  BYTE;
 typedef uint16_t USHORT;
@@ -25,6 +49,11 @@ typedef uintptr_t UINT_PTR;
 #ifndef FALSE
 #define FALSE 0
 #endif
+
+/* ---- UTF-16 string constants ---- */
+/* CoreCLR metadata APIs use UTF-16 (WCHAR/char16_t) on all platforms.
+ * Since we can't use L"..." (that's wchar_t, which is 32-bit on Linux),
+ * we define UTF-16 strings as static arrays. */
 
 static const WCHAR W_UprootedHook_Entry[] = {
     'U','p','r','o','o','t','e','d','H','o','o','k','.','E','n','t','r','y', 0
@@ -54,6 +83,8 @@ static const WCHAR W_Microsoft_Dot[] = {
     'M','i','c','r','o','s','o','f','t','.', 0
 };
 
+/* ---- UTF-16 string helpers ---- */
+
 static size_t u16len(const WCHAR* s) {
     size_t len = 0;
     while (s[len]) len++;
@@ -73,6 +104,7 @@ static int u16ncmp(const WCHAR* a, const WCHAR* b, size_t n) {
     return 0;
 }
 
+/* Convert UTF-16LE to UTF-8. Returns number of bytes written (excluding NUL). */
 static int u16_to_utf8(const WCHAR* src, char* dst, size_t dst_size) {
     int pos = 0;
     while (*src && (size_t)pos < dst_size - 1) {
@@ -84,7 +116,7 @@ static int u16_to_utf8(const WCHAR* src, char* dst, size_t dst_size) {
             dst[pos++] = (char)(0xC0 | (c >> 6));
             dst[pos++] = (char)(0x80 | (c & 0x3F));
         } else {
-
+            /* Check for surrogate pair */
             if (c >= 0xD800 && c <= 0xDBFF && *src >= 0xDC00 && *src <= 0xDFFF) {
                 uint32_t cp = 0x10000 + ((uint32_t)(c - 0xD800) << 10) + (*src++ - 0xDC00);
                 if ((size_t)pos + 4 > dst_size - 1) break;
@@ -104,6 +136,7 @@ static int u16_to_utf8(const WCHAR* src, char* dst, size_t dst_size) {
     return pos;
 }
 
+/* Convert UTF-8 to UTF-16LE. Returns number of WCHAR written (excluding NUL). */
 static int utf8_to_u16(const char* src, WCHAR* dst, size_t dst_chars) {
     int pos = 0;
     const unsigned char* s = (const unsigned char*)src;
@@ -124,7 +157,7 @@ static int utf8_to_u16(const char* src, WCHAR* dst, size_t dst_chars) {
             if (*s) { cp |= (*s++ & 0x3F) << 12; }
             if (*s) { cp |= (*s++ & 0x3F) << 6; }
             if (*s) { cp |= (*s++ & 0x3F); }
-
+            /* Encode as surrogate pair */
             if (cp >= 0x10000 && (size_t)pos + 2 <= dst_chars - 1) {
                 cp -= 0x10000;
                 dst[pos++] = (WCHAR)(0xD800 + (cp >> 10));
@@ -133,13 +166,14 @@ static int utf8_to_u16(const char* src, WCHAR* dst, size_t dst_chars) {
                 dst[pos++] = (WCHAR)'?';
             }
         } else {
-            s++;
+            s++; /* skip invalid byte */
         }
     }
     dst[pos] = 0;
     return pos;
 }
 
+/* Check if WCHAR string contains a substring */
 static const WCHAR* u16str(const WCHAR* haystack, const WCHAR* needle) {
     if (!*needle) return haystack;
     size_t nlen = u16len(needle);
@@ -150,9 +184,12 @@ static const WCHAR* u16str(const WCHAR* haystack, const WCHAR* needle) {
     return NULL;
 }
 
-static char g_hookDllPath[PATH_MAX];
-static WCHAR g_hookDllPathW[PATH_MAX];
-static char g_logFilePath[PATH_MAX];
+/* ---- Configuration ---- */
+
+/* Runtime-resolved paths */
+static char g_hookDllPath[PATH_MAX];     /* UTF-8 for file I/O and logging */
+static WCHAR g_hookDllPathW[PATH_MAX];   /* UTF-16 for metadata API */
+static char g_logFilePath[PATH_MAX];     /* UTF-8 */
 
 static void InitPaths(void) {
     const char* home = getenv("HOME");
@@ -161,6 +198,8 @@ static void InitPaths(void) {
     snprintf(g_logFilePath, PATH_MAX, "%s/.local/share/uprooted/profiler.log", home);
     utf8_to_u16(g_hookDllPath, g_hookDllPathW, PATH_MAX);
 }
+
+/* ---- Minimal COM types ---- */
 
 typedef struct {
     unsigned long  Data1;
@@ -173,6 +212,8 @@ static int MyIsEqualGUID(const MYGUID* a, const MYGUID* b) {
     return memcmp(a, b, sizeof(MYGUID)) == 0;
 }
 
+/* ---- GUIDs ---- */
+
 static const MYGUID CLSID_UprootedProfiler =
     { 0xD1A6F5A0, 0x1234, 0x4567, { 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67 } };
 static const MYGUID MY_IID_IUnknown =
@@ -180,6 +221,7 @@ static const MYGUID MY_IID_IUnknown =
 static const MYGUID MY_IID_IClassFactory =
     { 0x00000001, 0x0000, 0x0000, { 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 } };
 
+/* ICorProfilerCallback versions */
 static const MYGUID IID_ICorProfilerCallback =
     { 0x176FBED1, 0xA55C, 0x4796, { 0x98, 0xCA, 0xA9, 0xDA, 0x0E, 0xF8, 0x83, 0xE7 } };
 static const MYGUID IID_ICorProfilerCallback2 =
@@ -203,6 +245,7 @@ static const MYGUID IID_ICorProfilerCallback10 =
 static const MYGUID IID_ICorProfilerCallback11 =
     { 0x42350846, 0xAAED, 0x47F7, { 0xB1, 0x28, 0xFD, 0x0C, 0x98, 0x88, 0x1C, 0xDE } };
 
+/* Interface GUIDs */
 static const MYGUID IID_ICorProfilerInfo =
     { 0x28B5557D, 0x3F3F, 0x48B4, { 0x90, 0xB2, 0x5F, 0x9E, 0xEA, 0x2F, 0x6C, 0x48 } };
 static const MYGUID IID_IMetaDataImport =
@@ -210,6 +253,7 @@ static const MYGUID IID_IMetaDataImport =
 static const MYGUID IID_IMetaDataEmit =
     { 0xBA3FEE4C, 0xECB9, 0x4e41, { 0x83, 0xB7, 0x18, 0x3F, 0xA4, 0x1C, 0xD8, 0x59 } };
 
+/* ---- ICorProfilerInfo vtable indices (from corprof.idl) ---- */
 #define VT_PI_GetFunctionInfo           15
 #define VT_PI_SetEventMask              16
 #define VT_PI_GetModuleInfo             20
@@ -218,6 +262,7 @@ static const MYGUID IID_IMetaDataEmit =
 #define VT_PI_GetILFunctionBodyAllocator 23
 #define VT_PI_SetILFunctionBody         24
 
+/* IMetaDataImport vtable indices (from cor.h) */
 #define VT_MI_CloseEnum       3
 #define VT_MI_EnumTypeDefs    6
 #define VT_MI_EnumTypeRefs    8
@@ -228,16 +273,20 @@ static const MYGUID IID_IMetaDataEmit =
 #define VT_MI_GetMethodProps     30
 #define VT_MI_FindTypeRef    55
 
+/* IMetaDataEmit vtable indices (from cor.h) */
 #define VT_ME_DefineTypeRefByName 12
 #define VT_ME_DefineMemberRef    14
 #define VT_ME_DefineUserString   28
 
+/* COR_PRF_MONITOR flags */
 #define COR_PRF_MONITOR_MODULE_LOADS    0x00000004
 #define COR_PRF_MONITOR_JIT_COMPILATION 0x00000020
 
+/* Metadata open flags */
 #define ofRead   0x00000000
 #define ofWrite  0x00000001
 
+/* IL opcodes */
 #define IL_NOP       0x00
 #define IL_LDSTR     0x72
 #define IL_CALL      0x28
@@ -246,13 +295,17 @@ static const MYGUID IID_IMetaDataEmit =
 #define IL_LEAVE_S   0xDE
 #define IL_RET       0x2A
 
+/* Method header flags */
 #define CorILMethod_TinyFormat  0x02
 #define CorILMethod_FatFormat   0x03
 #define CorILMethod_MoreSects   0x08
 #define CorILMethod_InitLocals  0x10
 
+/* Exception section flags */
 #define CorILMethod_Sect_EHTable   0x01
 #define CorILMethod_Sect_FatFormat 0x40
+
+/* ---- Lazy path initialization ---- */
 
 static volatile int32_t g_pathsInitialized = 0;
 
@@ -261,6 +314,8 @@ static void EnsurePathsInitialized(void) {
         InitPaths();
     }
 }
+
+/* ---- Logging ---- */
 
 static FILE* g_logFile = NULL;
 
@@ -296,31 +351,42 @@ static void LogGUID(const char* label, const MYGUID* g) {
             g->Data4[4], g->Data4[5], g->Data4[6], g->Data4[7]);
 }
 
+/* ---- Forward declarations ---- */
+
 typedef struct UprootedProfiler UprootedProfiler;
 static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken);
 
+/* ---- Profiler state ---- */
+
 static volatile int32_t g_refCount = 1;
-static void* g_profilerInfo = NULL;
+static void* g_profilerInfo = NULL;       /* ICorProfilerInfo* */
 static volatile int32_t g_injectionCount = 0;
 static volatile int32_t g_jitCount = 0;
 static volatile int32_t g_moduleCount = 0;
 static UINT_PTR g_corelibModuleId = 0;
 
+/* Target module: first app/3rd-party module with proper TypeRef metadata */
 static UINT_PTR g_targetModuleId = 0;
 
+/* MemberRef tokens created in the target module */
 static unsigned int g_tokLoadFromMR = 0;
 static unsigned int g_tokCreateInstMR = 0;
 static unsigned int g_tokExceptionTR = 0;
 static unsigned int g_tokPathString = 0;
 static unsigned int g_tokTypeString = 0;
 
+/* Flag: target module tokens are ready */
 static volatile int32_t g_targetReady = 0;
 
 static void** GetInfoVtable(void) {
     return *(void***)g_profilerInfo;
 }
 
+/* ---- Stub for unused vtable slots ---- */
+
 static HRESULT Stub_OK(void) { return 0; }
+
+/* ---- Check if GUID is any ICorProfilerCallback version ---- */
 
 static int IsProfilerCallbackGUID(const MYGUID* riid) {
     return MyIsEqualGUID(riid, &IID_ICorProfilerCallback) ||
@@ -336,9 +402,11 @@ static int IsProfilerCallbackGUID(const MYGUID* riid) {
            MyIsEqualGUID(riid, &IID_ICorProfilerCallback11);
 }
 
+/* ---- IUnknown methods ---- */
+
 static HRESULT Prof_QueryInterface(UprootedProfiler* self,
                                    const MYGUID* riid, void** ppv) {
-    if (!ppv) return 0x80004003;
+    if (!ppv) return 0x80004003; /* E_POINTER */
     if (MyIsEqualGUID(riid, &MY_IID_IUnknown) || IsProfilerCallbackGUID(riid)) {
         *ppv = self;
         __sync_add_and_fetch(&g_refCount, 1);
@@ -346,7 +414,7 @@ static HRESULT Prof_QueryInterface(UprootedProfiler* self,
     }
     LogGUID("QI: REJECTED", riid);
     *ppv = NULL;
-    return 0x80004002;
+    return 0x80004002; /* E_NOINTERFACE */
 }
 
 static ULONG Prof_AddRef(UprootedProfiler* self) {
@@ -357,15 +425,18 @@ static ULONG Prof_Release(UprootedProfiler* self) {
     return __sync_sub_and_fetch(&g_refCount, 1);
 }
 
+/* ---- Metadata helpers ---- */
+
+/* Compress a coded TypeDefOrRef index for use in method signatures. */
 static int CompressToken(unsigned int token, BYTE* buf) {
     unsigned int table = (token >> 24);
     unsigned int rid = token & 0x00FFFFFF;
     unsigned int tag;
     unsigned int coded;
 
-    if (table == 0x02) tag = 0;
-    else if (table == 0x01) tag = 1;
-    else tag = 2;
+    if (table == 0x02) tag = 0;       /* TypeDef */
+    else if (table == 0x01) tag = 1;  /* TypeRef */
+    else tag = 2;                      /* TypeSpec */
 
     coded = (rid << 2) | tag;
 
@@ -385,6 +456,7 @@ static int CompressToken(unsigned int token, BYTE* buf) {
     }
 }
 
+/* Release a COM interface pointer */
 static void SafeRelease(void* pInterface) {
     if (pInterface) {
         typedef ULONG (*ReleaseFn)(void*);
@@ -392,10 +464,13 @@ static void SafeRelease(void* pInterface) {
     }
 }
 
+/* ---- Token Discovery ---- */
+
 typedef HRESULT (*GetModuleMetaDataFn)(
     void* self, UINT_PTR moduleId, DWORD openFlags,
     const MYGUID* riid, void** ppOut);
 
+/* TypeRef function typedefs */
 typedef void (*CloseEnumFn)(void* self, void* hEnum);
 typedef HRESULT (*EnumTypeRefsFn)(
     void* self, void** phEnum, unsigned int rTypeRefs[], ULONG cMax, ULONG* pcTypeRefs);
@@ -403,6 +478,9 @@ typedef HRESULT (*GetTypeRefPropsFn)(
     void* self, unsigned int tr, unsigned int* ptkResolutionScope,
     WCHAR* szName, ULONG cchName, ULONG* pchName);
 
+/* Search for a TypeRef by name using enumeration.
+ * Returns the TypeRef token, or 0 if not found.
+ * Also returns the resolution scope via pScope (if non-NULL). */
 static unsigned int SearchTypeRef(void* pImport, void** importVt,
                                    const WCHAR* targetName, unsigned int* pScope) {
     CloseEnumFn closeEnum = (CloseEnumFn)importVt[VT_MI_CloseEnum];
@@ -435,6 +513,7 @@ static unsigned int SearchTypeRef(void* pImport, void** importVt,
     return result;
 }
 
+/* Log how many TypeRefs a module has (diagnostic) */
 static void LogTypeRefCount(void* pImport, void** importVt) {
     EnumTypeRefsFn enumTypeRefs = (EnumTypeRefsFn)importVt[VT_MI_EnumTypeRefs];
     CloseEnumFn closeEnum = (CloseEnumFn)importVt[VT_MI_CloseEnum];
@@ -448,7 +527,7 @@ static void LogTypeRefCount(void* pImport, void** importVt) {
     HRESULT hr = enumTypeRefs(pImport, &hEnum, typeRefs, 256, &count);
     if (hr == 0) {
         total = count;
-
+        /* Log first 5 TypeRef names */
         for (ULONG i = 0; i < count && i < 5; i++) {
             WCHAR trName[256];
             memset(trName, 0, sizeof(trName));
@@ -460,7 +539,7 @@ static void LogTypeRefCount(void* pImport, void** importVt) {
             PLogFmt("    TypeRef[%lu]: 0x%08X scope=0x%08X %s",
                     (unsigned long)i, typeRefs[i], trScope, narrow);
         }
-
+        /* Count remaining */
         while (1) {
             hr = enumTypeRefs(pImport, &hEnum, typeRefs, 256, &count);
             if (hr != 0 || count == 0) break;
@@ -471,13 +550,17 @@ static void LogTypeRefCount(void* pImport, void** importVt) {
     PLogFmt("  Total TypeRefs: %lu", (unsigned long)total);
 }
 
+/* Prepare cross-module tokens in a candidate target module.
+ * Creates MemberRef for Assembly.LoadFrom and Assembly.CreateInstance,
+ * creates TypeRef for Exception, creates UserString tokens.
+ * Returns TRUE if all tokens were created (this module is our target). */
 static BOOL PrepareTargetModule(UINT_PTR moduleId) {
     void** vt = GetInfoVtable();
     HRESULT hr;
 
     GetModuleMetaDataFn getMetaData = (GetModuleMetaDataFn)vt[VT_PI_GetModuleMetaData];
 
-
+    /* Step 0: Open IMetaDataImport and quick-check for System.Object TypeRef. */
     void* pImport = NULL;
     hr = getMetaData(g_profilerInfo, moduleId, ofRead, &IID_IMetaDataImport, &pImport);
     if (hr != 0 || !pImport) {
@@ -487,10 +570,10 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
 
     void** importVt = *(void***)pImport;
 
-
+    /* Diagnostic: log TypeRef count */
     LogTypeRefCount(pImport, importVt);
 
-
+    /* Search for System.Object */
     unsigned int runtimeScope = 0;
     unsigned int tokObjectTR = SearchTypeRef(pImport, importVt, W_System_Object, &runtimeScope);
     if (!tokObjectTR) {
@@ -500,7 +583,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
     }
     PLogFmt("  System.Object TypeRef=0x%08X scope=0x%08X", tokObjectTR, runtimeScope);
 
-
+    /* Step 1: Open IMetaDataEmit */
     void* pEmit = NULL;
     hr = getMetaData(g_profilerInfo, moduleId, ofRead | ofWrite, &IID_IMetaDataEmit, &pEmit);
     if (hr != 0 || !pEmit) {
@@ -510,7 +593,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
     }
     void** emitVt = *(void***)pEmit;
 
-
+    /* Step 2: Find or create TypeRef for System.Reflection.Assembly */
     unsigned int tokAssemblyTR = SearchTypeRef(pImport, importVt, W_System_Reflection_Assembly, NULL);
     if (tokAssemblyTR) {
         PLogFmt("  Found Assembly TypeRef=0x%08X", tokAssemblyTR);
@@ -525,7 +608,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
         if (hr != 0) goto fail;
     }
 
-
+    /* Step 3: Create MemberRef for Assembly.LoadFrom(string) */
     {
         typedef HRESULT (*DefineMemberRefFn)(
             void* self, unsigned int tkImport, LPCWSTR szName,
@@ -533,14 +616,14 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
             unsigned int* pmr);
         DefineMemberRefFn defineMemberRef = (DefineMemberRefFn)emitVt[VT_ME_DefineMemberRef];
 
-
+        /* Signature: static, 1 param, returns CLASS(Assembly), takes STRING */
         BYTE sig[16];
         int len = 0;
-        sig[len++] = 0x00;
-        sig[len++] = 0x01;
-        sig[len++] = 0x12;
+        sig[len++] = 0x00;  /* DEFAULT calling convention (static) */
+        sig[len++] = 0x01;  /* 1 parameter */
+        sig[len++] = 0x12;  /* ELEMENT_TYPE_CLASS */
         len += CompressToken(tokAssemblyTR, sig + len);
-        sig[len++] = 0x0E;
+        sig[len++] = 0x0E;  /* ELEMENT_TYPE_STRING */
 
         hr = defineMemberRef(pEmit, tokAssemblyTR, W_LoadFrom,
                              sig, (ULONG)len, &g_tokLoadFromMR);
@@ -549,7 +632,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
         if (hr != 0) goto fail;
     }
 
-
+    /* Step 4: Create MemberRef for Assembly.CreateInstance(string) */
     {
         typedef HRESULT (*DefineMemberRefFn)(
             void* self, unsigned int tkImport, LPCWSTR szName,
@@ -557,7 +640,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
             unsigned int* pmr);
         DefineMemberRefFn defineMemberRef = (DefineMemberRefFn)emitVt[VT_ME_DefineMemberRef];
 
-
+        /* Signature: instance, 1 param, returns OBJECT, takes STRING */
         BYTE sig[] = { 0x20, 0x01, 0x1C, 0x0E };
         hr = defineMemberRef(pEmit, tokAssemblyTR, W_CreateInstance,
                              sig, sizeof(sig), &g_tokCreateInstMR);
@@ -566,7 +649,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
         if (hr != 0) goto fail;
     }
 
-
+    /* Step 5: Find or create TypeRef for System.Exception */
     g_tokExceptionTR = SearchTypeRef(pImport, importVt, W_System_Exception, NULL);
     if (g_tokExceptionTR) {
         PLogFmt("  Found Exception TypeRef=0x%08X", g_tokExceptionTR);
@@ -580,7 +663,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
         if (hr != 0) goto fail;
     }
 
-
+    /* Step 6: Create UserString tokens */
     {
         typedef HRESULT (*DefineUserStringFn)(
             void* self, LPCWSTR szString, ULONG cchString,
@@ -599,7 +682,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
     g_targetModuleId = moduleId;
     PLog("  ALL tokens created successfully!");
 
-
+    /* Step 7: Find a method and inject IL immediately. */
     {
         typedef HRESULT (*EnumTypeDefsFn)(
             void* self, void** phEnum, unsigned int rTypeDefs[], ULONG cMax, ULONG* pcTypeDefs);
@@ -640,7 +723,7 @@ static BOOL PrepareTargetModule(UINT_PTR moduleId) {
                         getMethodProps(pImport, methods[m], NULL, methodName, 256,
                                       &methodNameLen, &methodAttrs, NULL, NULL, &codeRVA, &implFlags);
 
-
+                        /* Skip abstract (0x0400) and pinvokeimpl (0x2000) methods */
                         if (codeRVA != 0 && !(methodAttrs & 0x0400) && !(implFlags & 0x0004)) {
                             char narrowMethod[512];
                             u16_to_utf8(methodName, narrowMethod, sizeof(narrowMethod));
@@ -689,6 +772,20 @@ fail:
     return FALSE;
 }
 
+/* ---- IL Injection ---- */
+
+/*
+ * Inject Assembly.LoadFrom + CreateInstance into a method.
+ * The injected IL is wrapped in try/catch for safety.
+ * Returns TRUE on success.
+ *
+ * New IL body layout:
+ *   [Fat header 12 bytes]
+ *   [Injection IL 26 bytes]   <- try { LoadFrom + CreateInstance } catch { }
+ *   [Original IL code]
+ *   [Padding to 4-byte boundary]
+ *   [Exception handling section 28 bytes]
+ */
 static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
     void** vt = GetInfoVtable();
     HRESULT hr;
@@ -696,7 +793,7 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
     PLogFmt("DoInjectIL: module=0x%llX method=0x%08X",
             (unsigned long long)moduleId, methodToken);
 
-
+    /* Step 1: Get original IL body */
     typedef HRESULT (*GetILFunctionBodyFn)(
         void* self, UINT_PTR moduleId, unsigned int methodDef,
         BYTE** ppMethodBody, ULONG* pcbMethodSize);
@@ -709,7 +806,7 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
             hr, (unsigned long)origSize, origBody);
     if (hr != 0 || !origBody || origSize == 0) return FALSE;
 
-
+    /* Step 2: Parse original header */
     BYTE* origCode;
     ULONG origCodeSize;
     USHORT origMaxStack;
@@ -739,42 +836,42 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
                 origHeaderFlags, origMaxStack, (unsigned long)origCodeSize, origLocalsSig, origHasMoreSects);
     }
 
-
+    /* Skip methods with existing exception handlers */
     if (origHasMoreSects) {
         PLog("DoInjectIL: Method has MoreSects, skipping");
         return FALSE;
     }
 
-
+    /* Step 3: Build injection IL */
     #define INJECT_SIZE 26
 
     BYTE injection[INJECT_SIZE];
     int p = 0;
 
-
+    /* ldstr <pathString> */
     injection[p++] = IL_LDSTR;
     *(unsigned int*)(injection + p) = g_tokPathString; p += 4;
 
-
+    /* call Assembly.LoadFrom(string) via MemberRef */
     injection[p++] = IL_CALL;
     *(unsigned int*)(injection + p) = g_tokLoadFromMR; p += 4;
 
-
+    /* ldstr <typeString> */
     injection[p++] = IL_LDSTR;
     *(unsigned int*)(injection + p) = g_tokTypeString; p += 4;
 
-
+    /* callvirt Assembly.CreateInstance(string) via MemberRef */
     injection[p++] = IL_CALLVIRT;
     *(unsigned int*)(injection + p) = g_tokCreateInstMR; p += 4;
 
-
+    /* pop (discard CreateInstance result) */
     injection[p++] = IL_POP;
 
-
+    /* leave.s +3 (jump over catch handler to original code) */
     injection[p++] = IL_LEAVE_S;
     injection[p++] = 3;
 
-
+    /* CATCH HANDLER: pop exception, leave */
     injection[p++] = IL_POP;
     injection[p++] = IL_LEAVE_S;
     injection[p++] = 0;
@@ -784,7 +881,7 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
         return FALSE;
     }
 
-
+    /* Hex dump of injection for debugging */
     {
         char hexbuf[256];
         int hpos = 0;
@@ -794,21 +891,21 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
         PLogFmt("DoInjectIL: IL bytes: %s", hexbuf);
     }
 
-
+    /* Step 4: Calculate new body size with EH section */
     ULONG newCodeSize = INJECT_SIZE + origCodeSize;
     USHORT newMaxStack = origMaxStack < 2 ? 2 : origMaxStack;
     ULONG headerSize = 12;
 
-
+    /* EH section must be 4-byte aligned after code */
     ULONG codeEnd = headerSize + newCodeSize;
     ULONG ehPadding = (4 - (codeEnd % 4)) % 4;
-    ULONG ehSectionSize = 4 + 24;
+    ULONG ehSectionSize = 4 + 24;  /* 4-byte header + 1 fat clause (24 bytes) */
     ULONG totalSize = codeEnd + ehPadding + ehSectionSize;
     PLogFmt("DoInjectIL: newCodeSize=%lu ehPadding=%lu ehSection=%lu totalSize=%lu",
             (unsigned long)newCodeSize, (unsigned long)ehPadding,
             (unsigned long)ehSectionSize, (unsigned long)totalSize);
 
-
+    /* Step 5: Allocate memory via IMethodMalloc */
     typedef HRESULT (*GetAllocatorFn)(
         void* self, UINT_PTR moduleId, void** ppMalloc);
     GetAllocatorFn getAlloc = (GetAllocatorFn)vt[VT_PI_GetILFunctionBodyAllocator];
@@ -818,7 +915,7 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
     PLogFmt("DoInjectIL: GetILFunctionBodyAllocator hr=0x%08X ptr=%p", hr, pMalloc);
     if (hr != 0 || !pMalloc) return FALSE;
 
-
+    /* IMethodMalloc::Alloc is at vtable[3] */
     void** mallocVt = *(void***)pMalloc;
     typedef BYTE* (*AllocFn)(void* self, ULONG cb);
     AllocFn pfnAlloc = (AllocFn)mallocVt[3];
@@ -832,7 +929,7 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
 
     memset(newBody, 0, totalSize);
 
-
+    /* Step 6: Write fat header with MoreSects for EH section */
     USHORT fatFlags = (3 << 12)
                     | CorILMethod_FatFormat
                     | CorILMethod_MoreSects;
@@ -849,33 +946,33 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
     PLogFmt("DoInjectIL: header flags=0x%04X maxStack=%u codeSize=%lu locals=0x%08X",
             fatFlags, newMaxStack, (unsigned long)newCodeSize, origLocalsSig);
 
-
+    /* Step 7: Write IL code */
     memcpy(newBody + headerSize, injection, INJECT_SIZE);
     memcpy(newBody + headerSize + INJECT_SIZE, origCode, origCodeSize);
 
+    /* Step 8: Padding (zeros, already memset) */
 
-
-
+    /* Step 9: Write fat EH section */
     BYTE* ehSection = newBody + codeEnd + ehPadding;
 
-    ehSection[0] = CorILMethod_Sect_EHTable | CorILMethod_Sect_FatFormat;
+    ehSection[0] = CorILMethod_Sect_EHTable | CorILMethod_Sect_FatFormat;  /* 0x41 */
     ehSection[1] = (BYTE)(ehSectionSize & 0xFF);
     ehSection[2] = (BYTE)((ehSectionSize >> 8) & 0xFF);
     ehSection[3] = (BYTE)((ehSectionSize >> 16) & 0xFF);
 
-
+    /* Fat clause: catch System.Exception around injection code */
     BYTE* clause = ehSection + 4;
-    *(unsigned int*)(clause + 0)  = 0x00000000;
-    *(unsigned int*)(clause + 4)  = 0;
-    *(unsigned int*)(clause + 8)  = 23;
-    *(unsigned int*)(clause + 12) = 23;
-    *(unsigned int*)(clause + 16) = 3;
-    *(unsigned int*)(clause + 20) = g_tokExceptionTR;
+    *(unsigned int*)(clause + 0)  = 0x00000000;  /* Flags: COR_ILEXCEPTION_CLAUSE_NONE */
+    *(unsigned int*)(clause + 4)  = 0;           /* TryOffset */
+    *(unsigned int*)(clause + 8)  = 23;          /* TryLength */
+    *(unsigned int*)(clause + 12) = 23;          /* HandlerOffset */
+    *(unsigned int*)(clause + 16) = 3;           /* HandlerLength */
+    *(unsigned int*)(clause + 20) = g_tokExceptionTR;  /* ClassToken */
 
     PLogFmt("DoInjectIL: EH clause: try=[0,%u) handler=[%u,%u) catch=0x%08X",
             23, 23, 26, g_tokExceptionTR);
 
-
+    /* Step 10: Set the new IL body */
     typedef HRESULT (*SetILFunctionBodyFn)(
         void* self, UINT_PTR moduleId, unsigned int methodDef,
         BYTE* pbNewILMethodHeader);
@@ -895,32 +992,58 @@ static BOOL DoInjectIL(UINT_PTR moduleId, unsigned int methodToken) {
     }
 }
 
+/* ---- ICorProfilerCallback methods ---- */
+
 static HRESULT Prof_Initialize(UprootedProfiler* self, void* pICorProfilerInfoUnk) {
     PLog("=== Uprooted Profiler Initialize (Linux) ===");
     PLogFmt("PID: %d", getpid());
 
-
+    /* Process guard: only run in Root (including AppImage) */
     {
         char exePath[PATH_MAX];
         ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
         if (len <= 0) {
             PLog("Could not read /proc/self/exe, detaching");
-            return 0x80004005;
+            return 0x80004005; /* E_FAIL */
         }
         exePath[len] = '\0';
 
-
+        /* Extract basename */
         const char* lastSlash = strrchr(exePath, '/');
         const char* exeName = lastSlash ? lastSlash + 1 : exePath;
-        PLogFmt("Process: %s", exeName);
+        PLogFmt("Process: %s (full: %s)", exeName, exePath);
 
-        if (strcmp(exeName, "Root") != 0) {
-            PLogFmt("Not Root (got '%s'), detaching profiler", exeName);
-            return 0x80004005;
+        if (strcmp(exeName, "Root") != 0 && strcasecmp(exeName, "root") != 0) {
+            /* Not an exact match — check if we're inside an AppImage.
+             * AppImage runtime sets APPIMAGE env var to the .AppImage path.
+             * Also accept binary names like "Root-x86_64.AppImage". */
+            const char* appimage = getenv("APPIMAGE");
+            int isAppImage = 0;
+
+            if (appimage) {
+                /* Check if the APPIMAGE path contains "Root" (case-insensitive) */
+                const char* ai_base = strrchr(appimage, '/');
+                const char* ai_name = ai_base ? ai_base + 1 : appimage;
+                if (strcasestr(ai_name, "root") != NULL) {
+                    isAppImage = 1;
+                }
+            }
+
+            /* Also accept if the exe name starts with "Root" (e.g. Root-x86_64) */
+            if (!isAppImage && strncmp(exeName, "Root", 4) == 0) {
+                isAppImage = 1;
+            }
+
+            if (!isAppImage) {
+                PLogFmt("Not Root (got '%s'), detaching profiler", exeName);
+                return 0x80004005; /* E_FAIL = detach */
+            }
+            PLogFmt("AppImage detected (exe='%s', APPIMAGE='%s'), continuing",
+                    exeName, appimage ? appimage : "(unset)");
         }
     }
 
-
+    /* Query for ICorProfilerInfo */
     void** unkVtable = *(void***)pICorProfilerInfoUnk;
     typedef HRESULT (*QI_fn)(void*, const MYGUID*, void**);
     QI_fn qi = (QI_fn)unkVtable[0];
@@ -933,12 +1056,12 @@ static HRESULT Prof_Initialize(UprootedProfiler* self, void* pICorProfilerInfoUn
         return 0x80004005;
     }
 
-
+    /* Set event mask */
     void** vt = GetInfoVtable();
     typedef HRESULT (*SetEventMaskFn)(void* self, DWORD dwEvents);
     SetEventMaskFn setMask = (SetEventMaskFn)vt[VT_PI_SetEventMask];
 
-
+    /* COR_PRF_DISABLE_ALL_NGEN_IMAGES = 0x00080000 */
     DWORD mask = COR_PRF_MONITOR_JIT_COMPILATION | COR_PRF_MONITOR_MODULE_LOADS | 0x00080000;
     hr = setMask(g_profilerInfo, mask);
     PLogFmt("SetEventMask(0x%08X): hr=0x%08X", mask, hr);
@@ -975,18 +1098,18 @@ static HRESULT Prof_ModuleLoadFinished(UprootedProfiler* self,
         char narrow[512];
         u16_to_utf8(modName, narrow, sizeof(narrow));
 
-
+        /* Log first 20 modules */
         if (n <= 20) {
             PLogFmt("Module #%d: %s (id=0x%llX)", n, narrow, (unsigned long long)moduleId);
         }
 
-
+        /* Track CoreLib module ID */
         if (u16str(modName, W_System_Private_CoreLib) != NULL) {
             g_corelibModuleId = moduleId;
             PLogFmt("CoreLib module ID: 0x%llX", (unsigned long long)moduleId);
         }
 
-
+        /* Try each non-CoreLib, non-system module as injection target */
         if (!g_targetReady && moduleId != g_corelibModuleId &&
             u16ncmp(modName, W_System_Dot, 7) != 0 &&
             u16ncmp(modName, W_Microsoft_Dot, 10) != 0) {
@@ -1000,6 +1123,7 @@ static HRESULT Prof_ModuleLoadFinished(UprootedProfiler* self,
     return 0;
 }
 
+/* JITCompilationStarted callback */
 static HRESULT Prof_JITCompilationStarted(
     UprootedProfiler* self, UINT_PTR functionId, BOOL fIsSafeToBlock) {
 
@@ -1010,7 +1134,7 @@ static HRESULT Prof_JITCompilationStarted(
     if (!g_profilerInfo) return 0;
     if (g_corelibModuleId == 0) return 0;
 
-
+    /* Get function info */
     void** vt = GetInfoVtable();
     typedef HRESULT (*GetFunctionInfoFn)(
         void* self, UINT_PTR functionId, UINT_PTR* pClassId,
@@ -1022,21 +1146,21 @@ static HRESULT Prof_JITCompilationStarted(
     HRESULT hr = getFuncInfo(g_profilerInfo, functionId, &classId, &moduleId, &token);
     if (hr != 0) return 0;
 
-
+    /* Log first 10 JIT events */
     if (n <= 10 || (g_targetReady && moduleId == g_targetModuleId)) {
         PLogFmt("JIT #%d: module=0x%llX token=0x%08X%s",
                 n, (unsigned long long)moduleId, token,
                 (g_targetReady && moduleId == g_targetModuleId) ? " [TARGET]" : "");
     }
 
-
+    /* Fast path: already injected */
     if (g_injectionCount > 0) return 0;
 
-
+    /* Only inject into the target module */
     if (!g_targetReady) return 0;
     if (moduleId != g_targetModuleId) return 0;
 
-
+    /* Claim injection (one-shot) */
     if (__sync_val_compare_and_swap(&g_injectionCount, 0, 1) != 0) return 0;
 
     PLogFmt("=== Injecting into target module method 0x%08X (JIT #%d) ===", token, n);
@@ -1050,6 +1174,8 @@ static HRESULT Prof_JITCompilationStarted(
     PLog("=== INJECTION COMPLETE - managed hook will load when method is called ===");
     return 0;
 }
+
+/* ---- Vtable construction ---- */
 
 #define TOTAL_VTABLE_SIZE 128
 
@@ -1066,12 +1192,12 @@ static UprootedProfiler* CreateProfiler(void) {
         g_vtable[i] = (void*)Stub_OK;
     }
 
-
+    /* IUnknown [0-2] */
     g_vtable[0] = (void*)Prof_QueryInterface;
     g_vtable[1] = (void*)Prof_AddRef;
     g_vtable[2] = (void*)Prof_Release;
 
-
+    /* ICorProfilerCallback [3+] */
     g_vtable[3]  = (void*)Prof_Initialize;
     g_vtable[4]  = (void*)Prof_Shutdown;
     g_vtable[14] = (void*)Prof_ModuleLoadFinished;
@@ -1080,6 +1206,8 @@ static UprootedProfiler* CreateProfiler(void) {
     g_profilerInstance.vtable = g_vtable;
     return &g_profilerInstance;
 }
+
+/* ---- IClassFactory ---- */
 
 typedef struct ClassFactory { void** vtable; } ClassFactory;
 
@@ -1101,10 +1229,10 @@ static ULONG CF_Release(ClassFactory* self) { return 1; }
 static HRESULT CF_CreateInstance(ClassFactory* self, void* outer,
                                   const MYGUID* riid, void** ppv) {
     PLog("ClassFactory::CreateInstance");
-    if (outer) return 0x80040110;
+    if (outer) return 0x80040110; /* CLASS_E_NOAGGREGATION */
 
     UprootedProfiler* prof = CreateProfiler();
-    if (!prof) return 0x8007000E;
+    if (!prof) return 0x8007000E; /* E_OUTOFMEMORY */
 
     HRESULT hr = Prof_QueryInterface(prof, riid, ppv);
     PLogFmt("  CreateInstance result: 0x%08X", hr);
@@ -1123,6 +1251,10 @@ static void* g_cfVtable[] = {
 
 static ClassFactory g_classFactory = { g_cfVtable };
 
+/* ---- Exported functions ---- */
+/* On Linux, CoreCLR loads the profiler via dlopen() and calls
+ * dlsym("DllGetClassObject"). We export with default visibility. */
+
 __attribute__((visibility("default")))
 HRESULT DllGetClassObject(
     const MYGUID* rclsid, const MYGUID* riid, void** ppv) {
@@ -1133,10 +1265,14 @@ HRESULT DllGetClassObject(
         return 0;
     }
     *ppv = NULL;
-    return 0x80040111;
+    return 0x80040111; /* CLASS_E_CLASSNOTAVAILABLE */
 }
 
 __attribute__((visibility("default")))
 HRESULT DllCanUnloadNow(void) {
-    return 1;
+    return 1; /* S_FALSE = don't unload */
 }
+
+/* No DllMain equivalent needed on Linux.
+ * Initialization is lazy (triggered by DllGetClassObject -> Prof_Initialize).
+ * The .so is loaded via dlopen() and unloaded via dlclose(). */

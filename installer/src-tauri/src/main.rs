@@ -1,3 +1,4 @@
+// Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod detection;
@@ -35,7 +36,7 @@ fn kill_root() -> u32 {
 
 #[tauri::command]
 fn install_uprooted() -> PatchResult {
-
+    // Step 1: Deploy embedded files
     if let Err(e) = hook::deploy_files() {
         return PatchResult {
             success: false,
@@ -44,7 +45,7 @@ fn install_uprooted() -> PatchResult {
         };
     }
 
-
+    // Step 2: Set environment variables
     if let Err(e) = hook::set_env_vars() {
         return PatchResult {
             success: false,
@@ -53,13 +54,13 @@ fn install_uprooted() -> PatchResult {
         };
     }
 
-
+    // Step 3: Patch HTML files
     patcher::install()
 }
 
 #[tauri::command]
 fn uninstall_uprooted() -> PatchResult {
-
+    // Step 1: Remove environment variables
     if let Err(e) = hook::remove_env_vars() {
         return PatchResult {
             success: false,
@@ -68,10 +69,10 @@ fn uninstall_uprooted() -> PatchResult {
         };
     }
 
-
+    // Step 2: Restore HTML files
     let result = patcher::uninstall();
 
-
+    // Step 3: Remove deployed files
     if let Err(e) = hook::remove_files() {
         return PatchResult {
             success: false,
@@ -85,7 +86,7 @@ fn uninstall_uprooted() -> PatchResult {
 
 #[tauri::command]
 fn repair_uprooted() -> PatchResult {
-
+    // Re-deploy files (overwrite)
     if let Err(e) = hook::deploy_files() {
         return PatchResult {
             success: false,
@@ -94,7 +95,7 @@ fn repair_uprooted() -> PatchResult {
         };
     }
 
-
+    // Re-set env vars
     if let Err(e) = hook::set_env_vars() {
         return PatchResult {
             success: false,
@@ -103,7 +104,7 @@ fn repair_uprooted() -> PatchResult {
         };
     }
 
-
+    // Re-patch HTML
     patcher::repair()
 }
 
@@ -170,6 +171,34 @@ fn main() {
             get_uprooted_version,
             open_profile_dir,
         ])
+        .setup(|app| {
+            // Wayland + WebKitGTK renders a blank window when transparent=true + decorations=false.
+            // Detect Wayland and disable transparency to work around this.
+            let use_transparency = !is_wayland_session();
+
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("uprooted")
+            .inner_size(680.0, 520.0)
+            .resizable(false)
+            .decorations(false)
+            .transparent(use_transparency)
+            .center()
+            .build()?;
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Detect if running under a Wayland session.
+fn is_wayland_session() -> bool {
+    std::env::var("XDG_SESSION_TYPE")
+        .map(|v| v.eq_ignore_ascii_case("wayland"))
+        .unwrap_or(false)
+        || std::env::var("WAYLAND_DISPLAY").is_ok()
 }

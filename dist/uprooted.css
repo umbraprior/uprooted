@@ -1,4 +1,4 @@
-/* src\plugins\settings-panel\panel.css */
+/* src/plugins/settings-panel/panel.css */
 /* Settings panel -- Vencord-style sidebar injection styles */
 
 /* --- Sidebar item active state --- */
@@ -338,7 +338,7 @@
 }
 
 
-/* src\plugins\themes\forest-green.css */
+/* src/plugins/themes/forest-green.css */
 /*
  * Forest Green Theme for Root Communications
  * Overrides Root's CSS variable system with forest green tones.
