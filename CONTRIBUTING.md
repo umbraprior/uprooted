@@ -12,8 +12,8 @@ Thanks for your interest in contributing! Here's how to get started.
 > - Only @watchthelight can approve and merge PRs into `main`.
 
 ```bash
-git clone https://github.com/watchthelight/uprooted-private.git
-cd uprooted-private
+git clone https://github.com/watchthelight/uprooted.git
+cd uprooted
 git checkout contrib
 # make your changes, then:
 git push origin contrib
@@ -36,8 +36,8 @@ Uprooted is currently **awaiting approval** from Root's developers. We're accept
 ## Development Setup
 
 ```bash
-git clone https://github.com/watchthelight/uprooted-private.git
-cd uprooted-private
+git clone https://github.com/watchthelight/uprooted.git
+cd uprooted
 git checkout contrib
 pnpm install
 pnpm build
@@ -59,6 +59,10 @@ pnpm build
 5. Write a clear PR description explaining what changed and why
 6. Link any related issues
 7. Wait for @watchthelight to review and approve
+
+## Writing Plugins
+
+Want to contribute a plugin? See the [Plugin Contribution Guide](docs/plugins/CONTRIBUTING_PLUGINS.md) for the full fork-to-PR workflow, including naming conventions, testing checklist, and what reviewers look for.
 
 ## Reporting Bugs
 

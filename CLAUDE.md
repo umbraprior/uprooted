@@ -20,6 +20,7 @@ This is the **PUBLIC** repository (`watchthelight/uprooted`). There is a separat
 - `packaging/` — Distribution packaging (Arch PKGBUILD)
 - Install/uninstall scripts (PowerShell + Bash, comment-stripped)
 - `src/plugins/themes/themes.json` — Theme definitions only
+- `docs/` — Framework and plugin documentation
 
 ## What NEVER belongs here
 
@@ -27,7 +28,6 @@ This is the **PUBLIC** repository (`watchthelight/uprooted`). There is a separat
 - Extracted source code (src_dump/, source maps)
 - Security findings, vulnerability reports
 - Hardcoded credentials or tokens
-- Internal documentation (HOW_IT_WORKS, FRAMEWORK_GUIDE)
 - Test harnesses, dev scripts, site source
 - Research directory or any of its contents
 - .map files (source maps)
