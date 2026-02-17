@@ -1213,12 +1213,16 @@ typedef struct ClassFactory { void** vtable; } ClassFactory;
 
 static HRESULT CF_QueryInterface(ClassFactory* self,
                                   const MYGUID* riid, void** ppv) {
+    PLog("CF_QueryInterface called");
+    LogGUID("  CF QI riid", riid);
     if (!ppv) return 0x80004003;
     if (MyIsEqualGUID(riid, &MY_IID_IUnknown) ||
         MyIsEqualGUID(riid, &MY_IID_IClassFactory)) {
+        PLog("  CF QI -> S_OK");
         *ppv = self;
         return 0;
     }
+    PLog("  CF QI -> E_NOINTERFACE");
     *ppv = NULL;
     return 0x80004002;
 }
@@ -1229,13 +1233,14 @@ static ULONG CF_Release(ClassFactory* self) { return 1; }
 static HRESULT CF_CreateInstance(ClassFactory* self, void* outer,
                                   const MYGUID* riid, void** ppv) {
     PLog("ClassFactory::CreateInstance");
+    LogGUID("  CF CreateInstance riid", riid);
     if (outer) return 0x80040110; /* CLASS_E_NOAGGREGATION */
 
     UprootedProfiler* prof = CreateProfiler();
     if (!prof) return 0x8007000E; /* E_OUTOFMEMORY */
 
     HRESULT hr = Prof_QueryInterface(prof, riid, ppv);
-    PLogFmt("  CreateInstance result: 0x%08X", hr);
+    PLogFmt("  CreateInstance QI result: 0x%08X", hr);
     return hr;
 }
 
@@ -1258,12 +1263,17 @@ static ClassFactory g_classFactory = { g_cfVtable };
 __attribute__((visibility("default")))
 HRESULT DllGetClassObject(
     const MYGUID* rclsid, const MYGUID* riid, void** ppv) {
-    PLog("DllGetClassObject called");
+    PLogFmt("DllGetClassObject called (pid=%d)", getpid());
+    LogGUID("  rclsid", rclsid);
+    LogGUID("  riid  ", riid);
+    LogGUID("  expect", &CLSID_UprootedProfiler);
     if (!ppv) return 0x80004003;
     if (MyIsEqualGUID(rclsid, &CLSID_UprootedProfiler)) {
+        PLog("  CLSID MATCH -> returning ClassFactory");
         *ppv = &g_classFactory;
         return 0;
     }
+    PLog("  CLSID MISMATCH -> CLASS_E_CLASSNOTAVAILABLE");
     *ppv = NULL;
     return 0x80040111; /* CLASS_E_CLASSNOTAVAILABLE */
 }
