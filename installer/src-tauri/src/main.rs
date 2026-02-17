@@ -154,6 +154,13 @@ fn open_profile_dir() -> Result<(), String> {
 }
 
 fn main() {
+    // WebKitGTK GPU compositing causes blank/white windows on many Wayland compositors
+    // (KDE Plasma, GNOME, Fedora, etc). Disable before WebKit initializes.
+    if is_wayland_session() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
@@ -172,8 +179,6 @@ fn main() {
             open_profile_dir,
         ])
         .setup(|app| {
-            // Wayland + WebKitGTK renders a blank window when transparent=true + decorations=false.
-            // Detect Wayland and disable transparency to work around this.
             let use_transparency = !is_wayland_session();
 
             tauri::WebviewWindowBuilder::new(
