@@ -202,9 +202,9 @@ static void InitPaths(void) {
 /* ---- Minimal COM types ---- */
 
 typedef struct {
-    unsigned long  Data1;
-    unsigned short Data2;
-    unsigned short Data3;
+    uint32_t       Data1;    /* NOT unsigned long — long is 8 bytes on Linux x64 */
+    uint16_t       Data2;
+    uint16_t       Data3;
     unsigned char  Data4[8];
 } MYGUID;
 
@@ -345,8 +345,8 @@ static void PLogFmt(const char* fmt, ...) {
 }
 
 static void LogGUID(const char* label, const MYGUID* g) {
-    PLogFmt("%s {%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-            label, (unsigned long)g->Data1, g->Data2, g->Data3,
+    PLogFmt("%s {%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+            label, g->Data1, g->Data2, g->Data3,
             g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3],
             g->Data4[4], g->Data4[5], g->Data4[6], g->Data4[7]);
 }
